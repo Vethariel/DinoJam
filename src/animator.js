@@ -20,7 +20,7 @@ export class Animator {
    * Offset Y aplicado durante la animación "run" para compensar el flote.
    * Ajusta este valor hasta que los pies toquen el suelo.
    */
-  runYOffset = -0.25;
+  runYOffset = -0.18;
 
   /** @type {THREE.Object3D} */
   #model = null;

@@ -1,12 +1,13 @@
 /**
  * Gestiona toda la UI: loading overlay, status bar,
- * botones de animación, controles de audio y debug de materiales.
+ * botones de animación, controles de audio, panel de temas.
  */
 export class UI {
-  #statusEl    = document.getElementById('status-text');
-  #loadingEl   = document.getElementById('loading');
+  #statusEl     = document.getElementById('status-text');
+  #loadingEl    = document.getElementById('loading');
   #btnContainer = document.getElementById('btn-container');
-  #bgmBtn      = document.getElementById('bgm-toggle');
+  #bgmBtn       = document.getElementById('bgm-toggle');
+  #themePanel   = null;
 
   setStatus(text) { this.#statusEl.textContent = text; }
   hideLoading()   { this.#loadingEl.classList.add('hidden'); }
@@ -37,89 +38,69 @@ export class UI {
   }
 
   /**
-   * Construye un panel para togglear cada map del material en tiempo real.
-   * @param {THREE.Material | THREE.Material[]} materials
+   * Construye el panel de selección de temas con previews de color.
+   * @param {Object} themes   – objeto THEMES de theme.js
+   * @param {Function} onSelect – callback(id)
+   * @param {string} activeId   – tema inicial
    */
-  buildMaterialDebugPanel(materials) {
-    const mats = Array.isArray(materials) ? materials : [materials];
-
+  buildThemePanel(themes, onSelect, activeId) {
     // Quitar panel anterior si existe
-    document.getElementById('mat-debug')?.remove();
+    document.getElementById('theme-panel')?.remove();
 
     const panel = document.createElement('div');
-    panel.id = 'mat-debug';
-    panel.style.cssText = `
-      position: fixed; bottom: 40px; right: 16px;
-      background: rgba(0,0,0,0.82); border: 1px solid #2a2a2a;
-      border-radius: 8px; padding: 14px 16px; min-width: 200px;
-      backdrop-filter: blur(8px); z-index: 10; font-family: 'Courier New', monospace;
-    `;
-    panel.innerHTML = `<h3 style="font-size:10px;letter-spacing:2px;color:#555;
-      text-transform:uppercase;margin-bottom:10px;">Material maps</h3>`;
+    panel.id = 'theme-panel';
 
-    // Maps a inspeccionar
-    const MAPS = [
-      'map', 'normalMap', 'roughnessMap', 'metalnessMap',
-      'aoMap', 'emissiveMap', 'specularMap', 'alphaMap',
-    ];
+    const title = document.createElement('h3');
+    title.textContent = 'Temas';
+    panel.appendChild(title);
 
-    // Usar el primer material como referencia (todos son el mismo aquí)
-    const mat = mats[0];
+    for (const [id, theme] of Object.entries(themes)) {
+      const card = document.createElement('button');
+      card.className = 'theme-card' + (id === activeId ? ' active' : '');
+      card.dataset.themeId = id;
 
-    // Guardar referencias originales
-    const originals = {};
-    for (const key of MAPS) originals[key] = mat[key] ?? null;
-
-    // Mostrar solo los maps que existen
-    const activeMaps = MAPS.filter(k => originals[k] !== null);
-
-    if (activeMaps.length === 0) {
-      panel.innerHTML += `<p style="color:#555;font-size:11px;">sin maps activos</p>`;
-    }
-
-    for (const key of activeMaps) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
-
-      const toggle = document.createElement('button');
-      toggle.className = 'anim-btn active';
-      toggle.style.cssText = 'width:100%;margin:0;font-size:11px;padding:6px 10px;';
-      toggle.innerHTML = `<span class="dot"></span>${key}`;
-      toggle.dataset.active = 'true';
-
-      toggle.addEventListener('click', () => {
-        const isActive = toggle.dataset.active === 'true';
-        const next = !isActive;
-        toggle.dataset.active = String(next);
-        toggle.classList.toggle('active', next);
-
-        // Aplicar a todos los materiales
-        for (const m of mats) {
-          m[key] = next ? originals[key] : null;
-          m.needsUpdate = true;
-        }
+      // Preview de 3 swatches
+      const swatches = document.createElement('div');
+      swatches.className = 'theme-swatches';
+      theme.preview.forEach(hex => {
+        const s = document.createElement('span');
+        s.className = 'swatch';
+        s.style.background = hex;
+        swatches.appendChild(s);
       });
 
-      row.appendChild(toggle);
-      panel.appendChild(row);
-    }
+      const label = document.createElement('span');
+      label.className = 'theme-label';
+      label.textContent = theme.label;
 
-    // Botón reset
-    const reset = document.createElement('button');
-    reset.className = 'anim-btn';
-    reset.style.cssText = 'width:100%;margin-top:4px;font-size:11px;';
-    reset.textContent = 'reset todos';
-    reset.addEventListener('click', () => {
-      for (const m of mats) {
-        for (const key of MAPS) { m[key] = originals[key]; m.needsUpdate = true; }
-      }
-      panel.querySelectorAll('[data-active]').forEach(btn => {
-        btn.dataset.active = 'true';
-        btn.classList.add('active');
+      card.appendChild(swatches);
+      card.appendChild(label);
+      card.addEventListener('click', () => {
+        onSelect(id);
+        panel.querySelectorAll('.theme-card').forEach(c =>
+          c.classList.toggle('active', c.dataset.themeId === id)
+        );
       });
-    });
-    panel.appendChild(reset);
+
+      panel.appendChild(card);
+    }
 
     document.body.appendChild(panel);
+    this.#themePanel = panel;
+  }
+
+  setActiveTheme(id) {
+    this.#themePanel?.querySelectorAll('.theme-card').forEach(c =>
+      c.classList.toggle('active', c.dataset.themeId === id)
+    );
+  }
+
+  /**
+   * Panel de debug de materiales (mantenido por compatibilidad).
+   * @param {THREE.Material[]} materials
+   */
+  buildMaterialDebugPanel(materials) {
+    // No-op en producción con temas activos.
+    // Descomenta para debug de materiales originales.
   }
 }

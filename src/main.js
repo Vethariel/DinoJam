@@ -9,11 +9,13 @@ import { loadTRex }        from './loader.js';
 import { Animator }        from './animator.js';
 import { AudioManager }    from './audio.js';
 import { UI }              from './ui.js';
+import { RDSimulation }    from './rd.js';
+import { ThemeManager, THEMES } from './theme.js';
 
 const { renderer, scene, camera } = initScene();
 initEnvironment(scene);
-initLights(scene);
-initFloor(scene);
+const lights   = initLights(scene);
+const { floor, grid } = initFloor(scene);
 
 const controls = initControls(camera, renderer.domElement);
 const audio    = new AudioManager();
@@ -21,7 +23,9 @@ const ui       = new UI();
 
 ui.setStatus('cargando T-Rex.glb...');
 
-let animator = null;
+let animator     = null;
+const rdSim      = new RDSimulation(renderer);
+const themeMgr   = new ThemeManager();
 
 try {
   const { model, clips } = await loadTRex(scene, controls, camera, {
@@ -30,6 +34,13 @@ try {
 
   animator = new Animator(model, clips);
 
+  // Inicializar sistema de temas
+  themeMgr.init(scene, model, floor, grid, lights, rdSim);
+
+  // Aplicar tema inicial
+  themeMgr.apply('neon');
+
+  // Botones de animación
   ui.buildAnimationButtons(animator.animationNames, (name) => {
     animator.play(name);
     ui.setActiveAnimation(name);
@@ -43,21 +54,16 @@ try {
     ui.setStatus(`${clips.length} animaciones cargadas`);
   }
 
-  // ── Debug panel de materiales ──────────────────────────────
-  // Recolectar todos los materiales únicos del modelo
-  const matSet = new Set();
-  model.traverse((obj) => {
-    if (!obj.isMesh) return;
-    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-    mats.forEach(m => { if (m) matSet.add(m); });
-  });
-  ui.buildMaterialDebugPanel([...matSet]);
+  // Panel de temas
+  ui.buildThemePanel(THEMES, (id) => {
+    themeMgr.apply(id);
+    ui.setActiveTheme(id);
+    ui.setStatus(`tema: ${THEMES[id].label}`);
+  }, 'neon');
 
-  // ── Audio ──────────────────────────────────────────────────
+  // Audio
   const initAudioOnce = () => {
     audio.init(camera);
-    // audio.loadBGM('audio/bgm.mp3');
-    // audio.loadRoar('audio/roar.mp3');
     document.removeEventListener('click', initAudioOnce);
   };
   document.addEventListener('click', initAudioOnce);
@@ -76,6 +82,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
   animator?.update(dt);
+  themeMgr.update(dt);
   controls.update();
   renderer.render(scene, camera);
 }
