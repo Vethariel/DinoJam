@@ -154,6 +154,10 @@ body.customization-hidden #theme-panel {
   color: #4fa;
 }
 
+body.customization-hidden #brand-controls #status {
+  display: none;
+}
+
 #customization-toggle {
   width: 42px;
   min-width: 42px;
