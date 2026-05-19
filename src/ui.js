@@ -99,7 +99,7 @@ export class UI {
    * Panel de debug de materiales (mantenido por compatibilidad).
    * @param {THREE.Material[]} materials
    */
-  buildMaterialDebugPanel(materials) {
+  buildMaterialDebugPanel(_materials) {
     // No-op en producción con temas activos.
     // Descomenta para debug de materiales originales.
   }

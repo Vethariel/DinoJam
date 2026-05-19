@@ -1,0 +1,21 @@
+{
+  "name": "dinojam",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Browser-based T-Rex viewer with animated themes powered by Three.js.",
+  "scripts": {
+    "dev": "serve . -l 5173",
+    "start": "npm run dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier README.md package.json eslint.config.js .prettierrc.json --write",
+    "format:check": "prettier README.md package.json eslint.config.js .prettierrc.json --check"
+  },
+  "devDependencies": {
+    "eslint": "^9.27.0",
+    "globals": "^15.15.0",
+    "prettier": "^3.5.3",
+    "serve": "^14.2.4"
+  }
+}
