@@ -29,6 +29,7 @@ const CAMERA_PRESETS = {
   outro_pullback:      { pos: [22.0, 8.4, 22.8], target: [0, 1.2, 0] },
 };
 const CAMERA_TARGET_Y_OFFSET = 0.9;
+const INITIAL_THEME_ID = 'map';
 
 let musicCues = null;
 try {
@@ -47,13 +48,15 @@ const { floor, grid } = initFloor(scene);
 const controls = initControls(camera, renderer.domElement);
 const audio    = new AudioManager();
 const ui       = new UI();
+const startOverlayEl = document.getElementById('start-overlay');
+const startExperienceBtn = document.getElementById('start-experience-btn');
 ui.setCustomizationVisible(false);
 ui.bindCustomizationToggle((isVisible) => {
   ui.setStatus(isVisible ? 'personalizacion: visible' : 'personalizacion: oculta');
 });
 
-// Audio: intenta iniciar en cuanto arranca la app; si el navegador bloquea autoplay,
-// se reintenta en el primer gesto del usuario.
+// Audio: se prepara al inicio, pero la reproduccion inicia con accion explicita
+// del usuario desde el overlay "Iniciar experiencia".
 let audioBootstrapped = false;
 const startAudio = () => {
   if (audioBootstrapped) return;
@@ -61,32 +64,19 @@ const startAudio = () => {
   audio.init(camera);
   audio.loadBGM('music.mp3', 0.5);
   audio.loadRoar('roar.mp3', 0.9);
-  audio.playBGM();
 };
 startAudio();
-const interactionEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
-const tryResumeAudio = () => {
+const startExperience = () => {
   audio.playBGM();
   const ctx = audio.listener?.context;
   if (ctx?.state === 'suspended') {
     ctx.resume().catch(() => {});
   }
-  if (ctx?.state === 'running') {
-    ui.setBGMActive(true);
-    interactionEvents.forEach((evt) => {
-      window.removeEventListener(evt, tryResumeAudio);
-    });
-  }
+  ui.setBGMActive(true);
+  startOverlayEl?.classList.add('hidden');
+  ui.setStatus('experiencia iniciada');
 };
-interactionEvents.forEach((evt) => {
-  window.addEventListener(evt, tryResumeAudio, { passive: true });
-});
-
-window.setTimeout(() => {
-  if (!audio.bgm?.isPlaying) {
-    ui.setStatus('audio bloqueado por navegador: interactua para iniciar');
-  }
-}, 900);
+startExperienceBtn?.addEventListener('click', startExperience);
 
 ui.bindBGMToggle((isActive) => {
   if (isActive) audio.playBGM();
@@ -156,7 +146,7 @@ try {
   themeMgr.init(scene, model, floor, grid, lights, rdSim, camera);
 
   // Aplicar tema inicial
-  themeMgr.apply('neon');
+  themeMgr.apply(INITIAL_THEME_ID);
 
   // Botones de animación
   ui.buildAnimationButtons(animator.animationNames, (name) => {
@@ -175,7 +165,7 @@ try {
     themeMgr.apply(id);
     ui.setActiveTheme(id);
     ui.setStatus(`tema: ${THEMES[id].label}`);
-  }, 'neon');
+  }, INITIAL_THEME_ID);
 
   if (musicCues?.tracks) {
     cueLoopDurationSec = Object.values(musicCues.tracks)
@@ -274,6 +264,8 @@ try {
   }
 
   ui.hideLoading();
+  startOverlayEl?.classList.remove('hidden');
+  ui.setStatus('haz clic en iniciar experiencia');
 
 } catch (err) {
   ui.setStatus(`error: ${err.message}`);

@@ -216,6 +216,37 @@ body.customization-hidden #brand-controls #status {
   animation: load 1.5s ease-in-out infinite;
 }
 
+#start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(4px);
+  transition: opacity 0.25s ease;
+}
+
+#start-overlay p {
+  color: #d0d0d0;
+  font-size: 13px;
+  letter-spacing: 0.8px;
+}
+
+#start-experience-btn {
+  width: auto;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+#start-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
 @keyframes load {
   0%   { left: -100%; width: 100%; }
   100% { left:  100%; width: 100%; }
