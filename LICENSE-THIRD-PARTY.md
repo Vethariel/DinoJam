@@ -15,4 +15,10 @@ This file tracks third-party assets used by DinoJam and their corresponding lice
 - **Source:** https://pixabay.com/music/trap-trap-trap-beat-514138/
 - **License:** Pixabay Content License
 
+### Sound Effect (`roar.mp3`)
+
+- **Title:** Movies And Special Effects Dinosaur Roar
+- **Source:** https://pixabay.com/es/sound-effects/pel%c3%adculas-y-efectos-especiales-dinosaur-roar-390283/
+- **License:** Pixabay Content License
+
 Please verify redistribution terms for third-party assets before commercial use or re-publication.

@@ -76,6 +76,14 @@ Please keep attribution to the original author and source when redistributing th
 - **Source:** [Pixabay track page](https://pixabay.com/music/trap-trap-trap-beat-514138/)
 - **License:** Pixabay Content License (see third-party license notes)
 
+## Sound Effect Attribution
+
+`roar.mp3` uses the Pixabay sound effect:
+
+- **Title:** Movies And Special Effects Dinosaur Roar
+- **Source:** [Pixabay effect page](https://pixabay.com/es/sound-effects/pel%c3%adculas-y-efectos-especiales-dinosaur-roar-390283/)
+- **License:** Pixabay Content License (see third-party license notes)
+
 ## License
 
 - Source code in this repository is licensed under the MIT License (see `LICENSE`).

@@ -12,9 +12,14 @@ import * as THREE from 'three';
 const SIM_RES = 512;
 const RD_MUSIC_BPM = 161.5;
 const RD_BEAT_SECONDS = 60 / RD_MUSIC_BPM;
-const RD_GROW_SECONDS = RD_BEAT_SECONDS * 2;  // 2 beats
-const RD_DECAY_SECONDS = RD_BEAT_SECONDS * 1; // 1 beat
-const RD_CLEAR_SECONDS = RD_BEAT_SECONDS * 1; // 1 beat
+const RD_SECONDARY_KICK_MIN_SECONDS = RD_BEAT_SECONDS; // no reaccionar mas rapido que el pulso secundario
+const RD_MAIN_KICK_SECONDS = RD_BEAT_SECONDS * 4; // kick principal ~= 1 compas
+const RD_CYCLE_SECONDS = Math.max(
+  RD_MAIN_KICK_SECONDS,
+  RD_SECONDARY_KICK_MIN_SECONDS * 2.6
+);
+const RD_GROW_SECONDS = RD_CYCLE_SECONDS * 0.62;
+const RD_DECAY_SECONDS = RD_CYCLE_SECONDS - RD_GROW_SECONDS;
 
 // ── Vertex trivial ──────────────────────────────────────────
 const vertSrc = /* glsl */`
@@ -96,13 +101,15 @@ export class RDSimulation {
 
   #phase = 'grow';
   #phaseTime = 0;
-  #growDuration = RD_GROW_SECONDS; // segundos aprox. para "llenar/estabilizar"
-  #decayDuration = RD_DECAY_SECONDS; // segundos aprox. para vaciar
-  #clearDuration = RD_CLEAR_SECONDS; // transición final de puntos aislados -> vacío
+  #growDuration = RD_GROW_SECONDS;
+  #decayDuration = RD_DECAY_SECONDS;
+  #cycleDuration = this.#growDuration + this.#decayDuration;
   #pendingRegenerate = false;
   #motifDecayBoost = 0;
   #motifClearBoost = 0;
   #presetIndex = 0;
+  #musicClock = 0;
+  #lastCyclePos = 0;
   #presets = [
     { feed: 0.053, kill: 0.061, Du: 0.205, Dv: 0.102, dt: 1.0, seedCount: 78, radiusMin: 3, radiusMax: 7 },
     { feed: 0.044, kill: 0.060, Du: 0.198, Dv: 0.099, dt: 1.0, seedCount: 70, radiusMin: 4, radiusMax: 8 },
@@ -181,11 +188,6 @@ export class RDSimulation {
 
   #startDecayCycle() {
     this.#phase = 'decay';
-    this.#phaseTime = 0;
-  }
-
-  #startClearCycle() {
-    this.#phase = 'clear';
     this.#phaseTime = 0;
   }
 
@@ -272,29 +274,47 @@ export class RDSimulation {
     const major = type === 'din_din_din_din_dan';
     this.#motifDecayBoost = Math.max(this.#motifDecayBoost, major ? 0.0028 : 0.0014);
     this.#motifClearBoost = Math.max(this.#motifClearBoost, major ? 0.42 : 0.16);
-    this.#phaseTime += RD_BEAT_SECONDS * (major ? 2.2 : 1.0);
+    // La fase queda bloqueada al kick principal; los motivos solo alteran intensidad.
+  }
+
+  /**
+   * Fuerza inicio de nuevo ciclo exactamente en el kick principal.
+   */
+  triggerMainKickCycle() {
+    this.#musicClock = 0;
+    this.#lastCyclePos = 0;
+    this.#startGenerationCycle();
   }
 
   update(dt, steps = 8) {
     // Regenerar en tick separado evita saltar de puntos -> nuevo patrón en el mismo frame.
-    if (this.#pendingRegenerate) {
+    this.#musicClock += dt;
+    const cyclePos = this.#musicClock % this.#cycleDuration;
+    const wrapped = cyclePos + 1e-6 < this.#lastCyclePos;
+    if (this.#pendingRegenerate || wrapped) {
       this.#startGenerationCycle();
     }
+    this.#pendingRegenerate = false;
+    this.#lastCyclePos = cyclePos;
 
-    this.#phaseTime += dt;
+    // Bloqueo de fase:
+    // - inicio de ciclo (kick principal): arranca grow con patrón nuevo
+    // - fin de decay: coincide con el siguiente kick principal
+    if (cyclePos < this.#growDuration) {
+      this.#phase = 'grow';
+      this.#phaseTime = cyclePos;
+    } else {
+      this.#phase = 'decay';
+      this.#phaseTime = cyclePos - this.#growDuration;
+    }
 
     if (this.#phase === 'grow') {
       this.#mat.uniforms.uDecay.value = 0.0;
       this.#mat.uniforms.uClearMix.value = 0.0;
-    } else if (this.#phase === 'decay') {
+    } else {
       const t = Math.min(this.#phaseTime / this.#decayDuration, 1.0);
       this.#mat.uniforms.uDecay.value = THREE.MathUtils.lerp(0.0002, 0.0020, t);
       this.#mat.uniforms.uClearMix.value = 0.0;
-    } else {
-      // Fase final: empuja remanentes puntuales hacia vacío antes del nuevo ciclo.
-      const t = Math.min(this.#phaseTime / this.#clearDuration, 1.0);
-      this.#mat.uniforms.uDecay.value = THREE.MathUtils.lerp(0.0020, 0.0060, t);
-      this.#mat.uniforms.uClearMix.value = THREE.MathUtils.smoothstep(t, 0.35, 1.0);
     }
 
     this.#mat.uniforms.uDecay.value = Math.min(0.02, this.#mat.uniforms.uDecay.value + this.#motifDecayBoost);
@@ -304,18 +324,6 @@ export class RDSimulation {
 
     const phaseSteps = this.#phase === 'grow' ? Math.max(1, Math.round(steps * 2.7)) : steps;
     this.step(phaseSteps);
-
-    if (this.#phase === 'grow' && this.#phaseTime >= this.#growDuration) {
-      this.#startDecayCycle();
-      return;
-    }
-    if (this.#phase === 'decay' && this.#phaseTime >= this.#decayDuration) {
-      this.#startClearCycle();
-      return;
-    }
-    if (this.#phase === 'clear' && this.#phaseTime >= this.#clearDuration) {
-      this.#pendingRegenerate = true;
-    }
   }
 
   /** Textura de resultado actual (canal R=U, G=V) */

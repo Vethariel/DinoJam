@@ -58,6 +58,8 @@ const fragNeon = /* glsl */`
   uniform sampler2D uRD;
   uniform sampler2D uBase;
   uniform float     uTime;
+  uniform float     uHue;
+  uniform float     uKick;
   uniform float     uHasBase;
   varying vec2 vUv;
   varying vec3 vNormal;
@@ -70,28 +72,54 @@ const fragNeon = /* glsl */`
   }
 
   void main(){
-    vec2  rd      = texture2D(uRD, vUv).rg;
-    // V alto = líneas del patrón RD (más finas y consistentes entre temas)
-    float lines   = rdLineMask(rd.g);
+    vec2 rd = texture2D(uRD, vUv).rg;
+    float kick = clamp(uKick, 0.0, 1.0);
+    float hue = fract(uHue);
 
-    // Color neon ciclante en las líneas
-    float hue     = fract(uTime * 0.07);
-    vec3  neonCol = hsl2rgb(hue, 1.0, 0.55);
+    // Mantener dino oscuro, pero recuperar lectura del patrón RD.
+    float lines = rdLineMask(rd.g);
+    float linesWide = smoothstep(0.12, 0.42, rd.g);
+    float pattern = clamp(lines + linesWide * kick * 0.75, 0.0, 1.0);
 
-    // Fondo puro negro (sin mapa/base texture residual).
-    vec3  darkBase= vec3(0.0);
+    vec3 patternCol = hsl2rgb(hue, 0.92, 0.52);
+    vec3 base = vec3(0.005);
+    vec3 color = mix(base, patternCol, pattern * (0.72 + kick * 0.38));
 
-    // Mezcla: líneas → neon, fondo → textura oscura
-    vec3  color   = mix(darkBase, neonCol, lines);
+    // Contorno/emisión muy sutil para conservar sensación neon sin perder oscuridad.
+    color += patternCol * pattern * (0.22 + kick * 0.36);
 
-    // Glow aditivo sobre líneas
-    color += neonCol * lines * 0.9;
-
-    // Sombreado suave para mantener volumen 3D
-    float diff = max(dot(vNormal, normalize(vec3(1.0,2.0,1.0))), 0.0)*0.35 + 0.65;
+    float diff = max(dot(vNormal, normalize(vec3(1.0,2.0,1.0))), 0.0) * 0.3 + 0.7;
     color *= diff;
 
     gl_FragColor = vec4(color, 1.0);
+  }
+`;
+
+const neonSkyVert = /* glsl */`
+  varying vec3 vLocalPos;
+  void main(){
+    vLocalPos = position;
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const neonSkyFrag = /* glsl */`
+  precision highp float;
+  uniform float uTime;
+  uniform float uHue;
+  uniform float uKick;
+  varying vec3 vLocalPos;
+
+  vec3 hsl2rgb(float h, float s, float l){
+    vec3 rgb = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0, 0.0, 1.0);
+    return l + s*(rgb-0.5)*(1.0-abs(2.0*l-1.0));
+  }
+
+  void main(){
+    float baseHue = fract(uHue + 0.5);
+    vec3 flatCol = hsl2rgb(baseHue, 0.28, 0.08);
+    gl_FragColor = vec4(flatCol, 1.0);
   }
 `;
 
@@ -583,6 +611,7 @@ export class ThemeManager {
   #bwCycleUniform = { value: 0 };
   #floorTimeMat = null;   // ShaderMaterial del suelo (para uTime)
   #neonReflector = null;  // Reflector real para piso neon (sin grid)
+  #neonSkyDome = null;    // Domo procedural para "lava lamp" sutil en cielo neon
   #shadowFloor = null;    // Receptor de sombra para suelos con shader custom
   #sandStorm = null;      // Partículas de arena ambiental (tema map)
   #sandVel = null;        // Velocidades por partícula (x,y,z)
@@ -609,6 +638,27 @@ export class ThemeManager {
   #depthFogFarUniform = { value: MAP_DEPTH_FOG.far };
   #depthFogColorUniform = { value: new THREE.Color(...MAP_DEPTH_FOG.color) };
   #floorFogColorUniform = { value: new THREE.Color(...MAP_DEPTH_FOG.color) };
+  #neonBaseHue = 0.08;
+  #neonHue = this.#neonBaseHue;
+  #neonFromHue = this.#neonHue;
+  #neonToHue = this.#neonHue;
+  #neonTransitionTime = 0.0;
+  #neonTransitionDuration = 0.0;
+  #neonKickTransitionSec = 0.014;
+  #neonKickPulse = 0;
+  #neonHueUniform = { value: this.#neonHue };
+  #neonKickUniform = { value: 0.0 };
+  #neonComplementPhase = this.#neonBaseHue;
+  #neonComplementFlip = false;
+  #neonHueAdvancePerKick = 0.042;
+  #bwIsWhite = false;
+  #bwFromCycle = 0.0;
+  #bwToCycle = 0.0;
+  #bwTransitionTime = 0.0;
+  #bwTransitionDuration = 0.0;
+  #bwMainTransitionSec = 0.08;
+  #bwSecondaryTransitionSec = this.#bwMainTransitionSec * 0.5;
+  #bwKickPulse = 0;
 
   init(scene, model, floorMesh, gridHelper, lights, rdSim, camera) {
     this.#scene      = scene;
@@ -619,6 +669,7 @@ export class ThemeManager {
     this.#rdSim      = rdSim;
     this.#camera     = camera;
     this.#ensureNeonReflector();
+    this.#ensureNeonSkyDome();
     this.#ensureShadowFloor();
     this.#ensureSandStorm();
     this.#ensureStormFog();
@@ -631,10 +682,33 @@ export class ThemeManager {
     if (!theme) return;
     this.#currentTheme = theme;
     const mapActive = theme.id === 'map';
+    if (theme.id === 'neon') {
+      // No reiniciar la fase: conserva continuidad cromática entre entradas/salidas de neon.
+      this.#neonHue = this.#neonToHue;
+      this.#neonFromHue = this.#neonHue;
+      this.#neonToHue = this.#neonHue;
+      this.#neonTransitionTime = 0.0;
+      this.#neonTransitionDuration = this.#neonKickTransitionSec;
+      this.#neonHueUniform.value = this.#neonHue;
+      this.#neonKickUniform.value = 0.0;
+    } else if (theme.id === 'bw') {
+      this.#bwIsWhite = false;
+      this.#bwFromCycle = 0.0;
+      this.#bwToCycle = 0.0;
+      this.#bwTransitionTime = 0.0;
+      this.#bwTransitionDuration = this.#bwMainTransitionSec;
+      this.#bwCycleUniform.value = 0.0;
+      this.#bwKickPulse = 0;
+    }
 
     // 1. Escena + fog
     this.#scene.background = theme.scene.background;
     this.#scene.fog        = theme.scene.fog;
+    if (theme.id === 'neon') {
+      // Fondo plano oscuro.
+      this.#scene.background = new THREE.Color(0x000000);
+      this.#scene.fog = null;
+    }
     if (mapActive && MAP_DEPTH_FOG.enabled) {
       // En modo depth-fog, el cielo usa el mismo tono para evitar "línea de horizonte".
       this.#scene.background = new THREE.Color(...MAP_DEPTH_FOG.color);
@@ -713,6 +787,30 @@ export class ThemeManager {
     this.#neonReflector = reflector;
   }
 
+  #ensureNeonSkyDome() {
+    if (this.#neonSkyDome || !this.#scene) return;
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: neonSkyVert,
+      fragmentShader: neonSkyFrag,
+      uniforms: {
+        uTime: this.#timeUniform,
+        uHue: this.#neonHueUniform,
+        uKick: this.#neonKickUniform,
+      },
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      transparent: false,
+      toneMapped: false,
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(240, 48, 32), mat);
+    dome.visible = false;
+    dome.frustumCulled = false;
+    dome.renderOrder = -200;
+    this.#scene.add(dome);
+    this.#neonSkyDome = dome;
+  }
+
   #applyFloorByTheme(theme) {
     const neonActive = theme.id === 'neon';
     const mapActive = theme.id === 'map';
@@ -720,6 +818,9 @@ export class ThemeManager {
 
     if (this.#neonReflector) {
       this.#neonReflector.visible = neonActive;
+    }
+    if (this.#neonSkyDome) {
+      this.#neonSkyDome.visible = neonActive;
     }
 
     if (this.#floorMesh) {
@@ -1110,6 +1211,8 @@ export class ThemeManager {
             uRD:     { value: this.#rdSim.rdTexture },
             uBase:   { value: baseMap },
             uTime:   this.#timeUniform,
+            uHue:    this.#neonHueUniform,
+            uKick:   this.#neonKickUniform,
             uCycle:  this.#bwCycleUniform,
             uHasBase:{ value: baseMap ? 1.0 : 0.0 },
             uDepthFogEnabled: this.#depthFogEnabledUniform,
@@ -1131,6 +1234,10 @@ export class ThemeManager {
   update(dt) {
     if (!this.#currentTheme) return;
     this.#timeUniform.value += dt;
+    if (this.#neonSkyDome && this.#camera) {
+      // Mantener el domo centrado en cámara evita parallax y "discos" gigantes estáticos.
+      this.#neonSkyDome.position.copy(this.#camera.position);
+    }
 
     this.#rdSim.update(dt, 8);
 
@@ -1143,7 +1250,7 @@ export class ThemeManager {
     }
 
     if (this.#currentTheme.id === 'neon') {
-      this.#updateNeonLights();
+      this.#updateNeonLights(dt);
     } else if (this.#currentTheme.id === 'bw') {
       this.#updateBWCycleEnvironment(dt);
     } else if (this.#currentTheme.id === 'map') {
@@ -1189,10 +1296,54 @@ export class ThemeManager {
     }
   }
 
-  #updateNeonLights() {
-    const t = this.#timeUniform.value;
-    const hue = (t * 0.09) % 1;
-    const pulse = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(t * 4.0));
+  triggerSecondaryKick(strength = 1.0) {
+    const themeId = this.#currentTheme?.id;
+    const clamped = THREE.MathUtils.clamp(strength, 0.2, 1.25);
+    if (themeId === 'neon') {
+      this.#neonComplementPhase = (this.#neonComplementPhase + this.#neonHueAdvancePerKick) % 1.0;
+      this.#neonComplementFlip = !this.#neonComplementFlip;
+      this.#neonFromHue = this.#neonHue;
+      // Mantiene contraste complementario pero rota la pareja de colores en cada kick.
+      this.#neonToHue = this.#neonComplementFlip
+        ? this.#neonComplementPhase
+        : (this.#neonComplementPhase + 0.5) % 1.0;
+      this.#neonTransitionTime = 0.0;
+      this.#neonTransitionDuration = this.#neonKickTransitionSec;
+      this.#neonKickPulse = Math.max(this.#neonKickPulse, clamped);
+      return;
+    }
+    if (themeId === 'bw') {
+      // BW agresivo: cada kick secundario alterna blanco/negro.
+      this.#bwIsWhite = !this.#bwIsWhite;
+      this.#bwFromCycle = this.#bwCycleUniform.value;
+      this.#bwToCycle = this.#bwIsWhite ? 1.0 : 0.0;
+      this.#bwTransitionTime = 0.0;
+      this.#bwTransitionDuration = this.#bwSecondaryTransitionSec;
+      this.#bwKickPulse = Math.max(this.#bwKickPulse, clamped);
+    }
+  }
+
+  triggerMainKick() {
+    if (this.#currentTheme?.id !== 'bw') return;
+    // El kick principal marca el inicio del patrón (negro).
+    this.#bwIsWhite = false;
+    this.#bwFromCycle = this.#bwCycleUniform.value;
+    this.#bwToCycle = 0.0;
+    this.#bwTransitionTime = 0.0;
+    this.#bwTransitionDuration = this.#bwMainTransitionSec;
+    this.#bwKickPulse = 1.0;
+  }
+
+  #updateNeonLights(dt) {
+    this.#neonTransitionTime += dt;
+    const d = Math.max(1e-4, this.#neonTransitionDuration);
+    const t = Math.min(this.#neonTransitionTime / d, 1.0);
+    this.#neonHue = THREE.MathUtils.lerp(this.#neonFromHue, this.#neonToHue, t);
+    this.#neonHueUniform.value = this.#neonHue;
+    this.#neonKickPulse = THREE.MathUtils.damp(this.#neonKickPulse, 0.0, 12.0, dt);
+    this.#neonKickUniform.value = Math.min(1.0, this.#neonKickPulse);
+    const hue = this.#neonHue;
+    const pulse = 0.76 + this.#neonKickPulse * 0.42;
 
     if (this.#lights.ambient) {
       this.#lights.ambient.color.setHSL((hue + 0.08) % 1, 0.7, 0.10);
@@ -1219,22 +1370,16 @@ export class ThemeManager {
   }
 
   #updateBWCycleEnvironment(_dt) {
-    // Patrón solicitado:
-    // 0.0-2.0 beats -> negro (B)
-    // 2.0-4.0 beats -> transición B->W
-    // 4.0-6.0 beats -> blanco (W)
-    const beatTime = this.#timeUniform.value / BW_BEAT_SECONDS;
-    const phase = ((beatTime % 6) + 6) % 6;
-    let cycle = 1.0;
-    if (phase < 2.0) {
-      cycle = 0.0;
-    } else if (phase < 4.0) {
-      cycle = THREE.MathUtils.smoothstep((phase - 2.0) / 2.0, 0, 1);
-    }
-    this.#bwCycleUniform.value = cycle;
+    this.#bwTransitionTime += _dt;
+    const dur = Math.max(1e-4, this.#bwTransitionDuration);
+    const t = Math.min(this.#bwTransitionTime / dur, 1.0);
+    this.#bwCycleUniform.value = THREE.MathUtils.lerp(this.#bwFromCycle, this.#bwToCycle, t);
+    this.#bwKickPulse = THREE.MathUtils.damp(this.#bwKickPulse, 0.0, 7.0, _dt);
+    const cycle = this.#bwCycleUniform.value;
+    const pulseLift = this.#bwKickPulse * 0.08;
 
     // El entorno cruza suavemente entre blanco y negro.
-    const bg = 1.0 - cycle;
+    const bg = THREE.MathUtils.clamp(1.0 - cycle + pulseLift, 0.0, 1.0);
     if (this.#scene?.background) this.#scene.background.setRGB(bg, bg, bg);
     if (this.#scene?.fog) this.#scene.fog.color.setRGB(bg, bg, bg);
   }
@@ -1244,4 +1389,5 @@ export class ThemeManager {
   }
 
   get currentThemeId() { return this.#currentTheme?.id ?? null; }
+  getNeonHue() { return this.#neonHue; }
 }

@@ -15,7 +15,7 @@ body {
   inset: 0;
 }
 
-canvas {
+#canvas-container canvas {
   display: block;
   width: 100% !important;
   height: 100% !important;
@@ -64,6 +64,30 @@ body.customization-hidden #theme-panel {
   pointer-events: none;
   transform: translateY(6px);
 }
+
+/* ── MUSIC FREQUENCY VISUALIZER ───────────────────── */
+#freq-visualizer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 128px;
+  pointer-events: none;
+  z-index: 22;
+  padding: 0 0 8px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0));
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+
+#freq-visualizer .freq-wave-canvas {
+  display: block;
+  width: auto !important;
+  height: 100% !important;
+  flex: 0 0 auto;
+}
+
 
 /* ── SHARED BUTTON STYLE ──────────────────────────── */
 .anim-btn {
@@ -118,7 +142,7 @@ body.customization-hidden #theme-panel {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 10px;

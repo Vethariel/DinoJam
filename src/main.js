@@ -40,6 +40,172 @@ try {
   // Si no hay cues todavía, la app sigue funcionando.
 }
 
+let kickPatterns = null;
+try {
+  const kickURL = new URL('./kick-patterns.json', import.meta.url);
+  const kickRes = await fetch(kickURL);
+  if (kickRes.ok) kickPatterns = await kickRes.json();
+} catch {
+  // Si no hay patrones de kick, usamos el track de themes original.
+}
+
+const buildKickDrivenThemeTrack = (patternsData, cueData) => {
+  if (!patternsData?.meta || !Array.isArray(patternsData.order) || !Array.isArray(patternsData.patterns)) {
+    return null;
+  }
+  const beatSec = Number(patternsData.meta.beatSec);
+  const barSec = Number(patternsData.meta.barSec);
+  const anchorSec = Number(patternsData.meta.anchorSec);
+  if (!Number.isFinite(beatSec) || !Number.isFinite(barSec) || !Number.isFinite(anchorSec) || beatSec <= 0 || barSec <= 0) {
+    return null;
+  }
+
+  const stepSec = beatSec / 4;
+  const patternsById = new Map(patternsData.patterns.map(p => [p.id, p]));
+  const mainKickTimes = [];
+
+  for (const bar of patternsData.order) {
+    const pattern = patternsById.get(bar.patternId);
+    const main16 = pattern?.main16;
+    if (typeof main16 !== 'string' || main16.length !== 16) continue;
+    const barIndex = Math.max(0, (bar.bar ?? 1) - 1);
+    const barStartSec = anchorSec + barIndex * barSec;
+    for (let i = 0; i < 16; i += 1) {
+      if (main16[i] === '1') {
+        mainKickTimes.push(barStartSec + i * stepSec);
+      }
+    }
+  }
+
+  if (mainKickTimes.length === 0) return null;
+
+  const calmSectionIds = new Set(['break', 'outro']);
+  const calmRanges = (cueData?.sections ?? [])
+    .filter(s => calmSectionIds.has(s?.id))
+    .map(s => ({ start: Number(s.start), end: Number(s.end) }))
+    .filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+  const isCalmTime = (t) => calmRanges.some(r => t >= r.start && t < r.end);
+
+  const track = [];
+  let energyThemeIndex = 0;
+  const energyThemes = ['neon', 'bw'];
+  let lastTheme = null;
+
+  const pushThemeCue = (timeSec, theme) => {
+    if (!Number.isFinite(timeSec) || !theme) return;
+    if (lastTheme === theme) return;
+    track.push({
+      t: Number(timeSec.toFixed(3)),
+      theme,
+      transitionSec: 0.28,
+    });
+    lastTheme = theme;
+  };
+
+  for (const t of mainKickTimes) {
+    if (isCalmTime(t)) {
+      pushThemeCue(t, 'map');
+    } else {
+      const theme = energyThemes[energyThemeIndex % energyThemes.length];
+      energyThemeIndex += 1;
+      pushThemeCue(t, theme);
+    }
+  }
+
+  for (const range of calmRanges) {
+    pushThemeCue(range.start, 'map');
+  }
+
+  track.sort((a, b) => a.t - b.t);
+  const dedupedTrack = [];
+  let prevTheme = null;
+  for (const cue of track) {
+    if (cue.theme === prevTheme) continue;
+    dedupedTrack.push(cue);
+    prevTheme = cue.theme;
+  }
+  return dedupedTrack;
+};
+
+const buildSecondaryKickTrack = (patternsData) => {
+  if (!patternsData?.meta || !Array.isArray(patternsData.order) || !Array.isArray(patternsData.patterns)) {
+    return null;
+  }
+  const beatSec = Number(patternsData.meta.beatSec);
+  const barSec = Number(patternsData.meta.barSec);
+  const anchorSec = Number(patternsData.meta.anchorSec);
+  if (!Number.isFinite(beatSec) || !Number.isFinite(barSec) || !Number.isFinite(anchorSec) || beatSec <= 0 || barSec <= 0) {
+    return null;
+  }
+
+  const stepSec = beatSec / 4;
+  const patternsById = new Map(patternsData.patterns.map(p => [p.id, p]));
+  const events = [];
+  for (const bar of patternsData.order) {
+    const pattern = patternsById.get(bar.patternId);
+    const secondary16 = pattern?.secondary16;
+    if (typeof secondary16 !== 'string' || secondary16.length !== 16) continue;
+    const barIndex = Math.max(0, (bar.bar ?? 1) - 1);
+    const barStartSec = anchorSec + barIndex * barSec;
+    for (let i = 0; i < 16; i += 1) {
+      if (secondary16[i] === '1') {
+        events.push({ t: Number((barStartSec + i * stepSec).toFixed(3)) });
+      }
+    }
+  }
+
+  if (events.length === 0) return null;
+  events.sort((a, b) => a.t - b.t);
+  return events;
+};
+
+const buildMainKickTrack = (patternsData) => {
+  if (!patternsData?.meta || !Array.isArray(patternsData.order) || !Array.isArray(patternsData.patterns)) {
+    return null;
+  }
+  const beatSec = Number(patternsData.meta.beatSec);
+  const barSec = Number(patternsData.meta.barSec);
+  const anchorSec = Number(patternsData.meta.anchorSec);
+  if (!Number.isFinite(beatSec) || !Number.isFinite(barSec) || !Number.isFinite(anchorSec) || beatSec <= 0 || barSec <= 0) {
+    return null;
+  }
+
+  const stepSec = beatSec / 4;
+  const patternsById = new Map(patternsData.patterns.map(p => [p.id, p]));
+  const events = [];
+  for (const bar of patternsData.order) {
+    const pattern = patternsById.get(bar.patternId);
+    const main16 = pattern?.main16;
+    if (typeof main16 !== 'string' || main16.length !== 16) continue;
+    const barIndex = Math.max(0, (bar.bar ?? 1) - 1);
+    const barStartSec = anchorSec + barIndex * barSec;
+    for (let i = 0; i < 16; i += 1) {
+      if (main16[i] === '1') {
+        events.push({ t: Number((barStartSec + i * stepSec).toFixed(3)) });
+      }
+    }
+  }
+
+  if (events.length === 0) return null;
+  events.sort((a, b) => a.t - b.t);
+  return events;
+};
+
+if (musicCues?.tracks && kickPatterns) {
+  const kickThemeTrack = buildKickDrivenThemeTrack(kickPatterns, musicCues);
+  if (Array.isArray(kickThemeTrack) && kickThemeTrack.length > 0) {
+    musicCues.tracks.theme = kickThemeTrack;
+  }
+  const secondaryKickTrack = buildSecondaryKickTrack(kickPatterns);
+  if (Array.isArray(secondaryKickTrack) && secondaryKickTrack.length > 0) {
+    musicCues.tracks.secondaryKick = secondaryKickTrack;
+  }
+  const mainKickTrack = buildMainKickTrack(kickPatterns);
+  if (Array.isArray(mainKickTrack) && mainKickTrack.length > 0) {
+    musicCues.tracks.mainKick = mainKickTrack;
+  }
+}
+
 const { renderer, scene, camera } = initScene();
 initEnvironment(scene);
 const lights   = initLights(scene);
@@ -147,6 +313,7 @@ try {
 
   // Aplicar tema inicial
   themeMgr.apply(INITIAL_THEME_ID);
+  ui.setVisualizerTheme(INITIAL_THEME_ID);
 
   // Botones de animación
   ui.buildAnimationButtons(animator.animationNames, (name) => {
@@ -164,6 +331,7 @@ try {
   ui.buildThemePanel(THEMES, (id) => {
     themeMgr.apply(id);
     ui.setActiveTheme(id);
+    ui.setVisualizerTheme(id);
     ui.setStatus(`tema: ${THEMES[id].label}`);
   }, INITIAL_THEME_ID);
 
@@ -171,7 +339,7 @@ try {
     cueLoopDurationSec = Object.values(musicCues.tracks)
       .flatMap(track => (Array.isArray(track) ? track.map(c => c.t ?? 0) : []))
       .reduce((maxT, t) => Math.max(maxT, t), 0);
-    const cueIndices = { theme: 0, camera: 0, animation: 0, fx: 0 };
+    const cueIndices = { theme: 0, camera: 0, animation: 0, fx: 0, secondaryKick: 0, mainKick: 0 };
     let lastCueTime = 0;
     let cameraTween = null;
 
@@ -188,6 +356,7 @@ try {
       if (!THEMES[cue.theme]) return;
       themeMgr.apply(cue.theme);
       ui.setActiveTheme(cue.theme);
+      ui.setVisualizerTheme(cue.theme);
       ui.setStatus(`cue theme: ${THEMES[cue.theme].label}`);
     };
 
@@ -225,6 +394,17 @@ try {
       };
     };
 
+    const triggerSecondaryKickCue = () => {
+      themeMgr.triggerSecondaryKick();
+      ui.triggerKick('secondary');
+    };
+
+    const triggerMainKickCue = () => {
+      rdSim.triggerMainKickCycle();
+      themeMgr.triggerMainKick();
+      ui.triggerKick('main');
+    };
+
 
     const processTrack = (name, currentTime, callback) => {
       const track = musicCues.tracks?.[name];
@@ -244,12 +424,16 @@ try {
           cueIndices.camera = 0;
           cueIndices.animation = 0;
           cueIndices.fx = 0;
+          cueIndices.secondaryKick = 0;
+          cueIndices.mainKick = 0;
         }
         lastCueTime = currentMusicTime;
 
         processTrack('theme', currentMusicTime, triggerThemeCue);
         processTrack('animation', currentMusicTime, triggerAnimCue);
         processTrack('camera', currentMusicTime, triggerCameraCue);
+        processTrack('secondaryKick', currentMusicTime, triggerSecondaryKickCue);
+        processTrack('mainKick', currentMusicTime, triggerMainKickCue);
 
         if (cameraTween) {
           cameraTween.elapsed += dt;
@@ -287,7 +471,10 @@ function animate() {
       : (cueLoopDurationSec > 0 ? (fallbackCueClockSec % cueLoopDurationSec) : fallbackCueClockSec);
     cueRuntime.update(cueTime, dt);
   }
+
   themeMgr.update(dt);
+  ui.setNeonHue(themeMgr.getNeonHue?.());
+  ui.update(dt);
   controls.update();
   renderer.render(scene, camera);
 }
