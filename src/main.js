@@ -76,6 +76,7 @@ let animator     = null;
 const rdSim      = new RDSimulation(renderer);
 const themeMgr   = new ThemeManager();
 let cueRuntime   = null;
+let cueLoopDurationSec = 0;
 
 try {
   const { model, clips } = await loadTRex(scene, controls, camera, {
@@ -114,6 +115,9 @@ try {
   }, 'neon');
 
   if (musicCues?.tracks) {
+    cueLoopDurationSec = Object.values(musicCues.tracks)
+      .flatMap(track => (Array.isArray(track) ? track.map(c => c.t ?? 0) : []))
+      .reduce((maxT, t) => Math.max(maxT, t), 0);
     const cueIndices = { theme: 0, camera: 0, animation: 0, fx: 0 };
     let lastCueTime = 0;
     let cameraTween = null;
@@ -246,15 +250,19 @@ try {
 }
 
 const clock = new THREE.Clock();
-let showTimeSec = 0;
+let fallbackCueClockSec = 0;
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
-  showTimeSec += dt;
+  fallbackCueClockSec += dt;
   animator?.update(dt);
   if (cueRuntime) {
-    cueRuntime.update(showTimeSec, dt);
+    const hasBGMBuffer = Boolean(audio.bgm?.buffer);
+    const cueTime = hasBGMBuffer
+      ? audio.getBGMTimeSec()
+      : (cueLoopDurationSec > 0 ? (fallbackCueClockSec % cueLoopDurationSec) : fallbackCueClockSec);
+    cueRuntime.update(cueTime, dt);
   }
   themeMgr.update(dt);
   controls.update();
