@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "description": "Browser-based T-Rex viewer with animated themes powered by Three.js.",
   "scripts": {
     "dev": "serve . -l 5173",

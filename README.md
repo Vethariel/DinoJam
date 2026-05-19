@@ -2,6 +2,13 @@
 
 Interactive browser-based T-Rex viewer built with Three.js, animation clips, and shader-based visual themes.
 
+## Experience Flow (Current)
+
+- The show starts directly with music + cue sequence.
+- Personalization panels are hidden by default.
+- Bottom-right UI shows the `DinoJam` title, live status text, and a gear toggle to show/hide customization controls.
+- Scene cues loop in sync with the BGM loop.
+
 ## Requirements
 
 - Node.js 18+ (recommended)
@@ -47,6 +54,8 @@ GitHub Actions runs the `CI` workflow on pushes to `main` and on pull requests:
 - `src/main.js` - startup flow and render loop
 - `src/*.js` - scene setup, model loading, animation, themes, audio, and UI
 - `T-Rex.glb` - main 3D model asset
+- `music.mp3` - background track used for the show timeline
+- `LICENSE-THIRD-PARTY.md` - third-party asset attribution and license notes
 
 ## Asset Attribution (CC BY)
 
@@ -58,3 +67,16 @@ GitHub Actions runs the `CI` workflow on pushes to `main` and on pull requests:
 - **License:** Creative Commons Attribution (CC BY)
 
 Please keep attribution to the original author and source when redistributing this project or derivative works that include the model.
+
+## Music Attribution
+
+`music.mp3` uses the Pixabay track:
+
+- **Title:** Trap Trap Trap Beat
+- **Source:** [Pixabay track page](https://pixabay.com/music/trap-trap-trap-beat-514138/)
+- **License:** Pixabay Content License (see third-party license notes)
+
+## License
+
+- Source code in this repository is licensed under the MIT License (see `LICENSE`).
+- Third-party assets (3D model and music) keep their original licenses (see `LICENSE-THIRD-PARTY.md`).

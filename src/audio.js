@@ -62,10 +62,7 @@ export class AudioManager {
       this.bgm.setLoop(true);
       this.bgm.setVolume(volume);
       this.#bgmDuration = buffer.duration || 0;
-      if (this.#bgmWantsPlay && !this.bgm.isPlaying) {
-        this.bgm.play();
-        this.#bgmClockStart = performance.now() / 1000;
-      }
+      if (this.#bgmWantsPlay && !this.bgm.isPlaying) this.playBGM();
       // No auto-play: usar playBGM() explícitamente
     });
   }
@@ -115,9 +112,26 @@ export class AudioManager {
 
   playBGM() {
     this.#bgmWantsPlay = true;
+    const ctx = this.listener?.context;
+    if (ctx?.state === 'suspended') {
+      ctx.resume()
+        .then(() => {
+          if (this.#bgmWantsPlay && this.bgm?.buffer && !this.bgm.isPlaying) {
+            this.bgm.play();
+            this.#bgmClockStart = performance.now() / 1000;
+          }
+        })
+        .catch(() => {
+          // El navegador puede bloquear hasta un gesto válido; se reintentará.
+        });
+    }
     if (this.bgm?.buffer && !this.bgm.isPlaying) {
-      this.bgm.play();
-      this.#bgmClockStart = performance.now() / 1000;
+      try {
+        this.bgm.play();
+        this.#bgmClockStart = performance.now() / 1000;
+      } catch {
+        // Si falla por autoplay policy, #bgmWantsPlay queda activo para reintento.
+      }
     }
   }
 

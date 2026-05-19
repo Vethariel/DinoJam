@@ -52,6 +52,47 @@ ui.bindCustomizationToggle((isVisible) => {
   ui.setStatus(isVisible ? 'personalizacion: visible' : 'personalizacion: oculta');
 });
 
+// Audio: intenta iniciar en cuanto arranca la app; si el navegador bloquea autoplay,
+// se reintenta en el primer gesto del usuario.
+let audioBootstrapped = false;
+const startAudio = () => {
+  if (audioBootstrapped) return;
+  audioBootstrapped = true;
+  audio.init(camera);
+  audio.loadBGM('music.mp3', 0.5);
+  audio.loadRoar('roar.mp3', 0.9);
+  audio.playBGM();
+};
+startAudio();
+const interactionEvents = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
+const tryResumeAudio = () => {
+  audio.playBGM();
+  const ctx = audio.listener?.context;
+  if (ctx?.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+  if (ctx?.state === 'running') {
+    ui.setBGMActive(true);
+    interactionEvents.forEach((evt) => {
+      window.removeEventListener(evt, tryResumeAudio);
+    });
+  }
+};
+interactionEvents.forEach((evt) => {
+  window.addEventListener(evt, tryResumeAudio, { passive: true });
+});
+
+window.setTimeout(() => {
+  if (!audio.bgm?.isPlaying) {
+    ui.setStatus('audio bloqueado por navegador: interactua para iniciar');
+  }
+}, 900);
+
+ui.bindBGMToggle((isActive) => {
+  if (isActive) audio.playBGM();
+  else audio.pauseBGM();
+});
+
 // Arranca la cámara en el mismo plano inicial del video (primer cue de cámara).
 {
   const firstCameraCue = musicCues?.tracks?.camera?.[0];
@@ -77,6 +118,8 @@ const rdSim      = new RDSimulation(renderer);
 const themeMgr   = new ThemeManager();
 let cueRuntime   = null;
 let cueLoopDurationSec = 0;
+const ROAR_DELAY_SEC = 2.5;
+let roarTimerId = null;
 
 try {
   const { model, clips } = await loadTRex(scene, controls, camera, {
@@ -84,6 +127,30 @@ try {
   });
 
   animator = new Animator(model, clips);
+
+  const playAnimation = (name, speed = 1.0) => {
+    animator.play(name, speed);
+    themeMgr.setAnimationState(name);
+    ui.setActiveAnimation(name);
+
+    if (roarTimerId !== null) {
+      clearTimeout(roarTimerId);
+      roarTimerId = null;
+    }
+
+    const isRoar = String(name).toLowerCase().includes('roar');
+    if (!isRoar) return;
+
+    const delayMs = Math.max(350, (ROAR_DELAY_SEC / Math.max(0.1, speed)) * 1000);
+    const expectedAnim = String(name).toLowerCase();
+    roarTimerId = window.setTimeout(() => {
+      const currentName = animator.currentAction?.getClip?.().name?.toLowerCase?.() ?? '';
+      if (currentName.includes(expectedAnim)) {
+        audio.triggerRoar();
+      }
+      roarTimerId = null;
+    }, delayMs);
+  };
 
   // Inicializar sistema de temas
   themeMgr.init(scene, model, floor, grid, lights, rdSim, camera);
@@ -93,17 +160,13 @@ try {
 
   // Botones de animación
   ui.buildAnimationButtons(animator.animationNames, (name) => {
-    animator.play(name);
-    themeMgr.setAnimationState(name);
-    ui.setActiveAnimation(name);
+    playAnimation(name, 1.0);
     ui.setStatus(`playing: ${name}`);
   });
 
   const first = animator.animationNames[0];
   if (first) {
-    animator.play(first);
-    themeMgr.setAnimationState(first);
-    ui.setActiveAnimation(first);
+    playAnimation(first, 1.0);
     ui.setStatus(`${clips.length} animaciones cargadas`);
   }
 
@@ -141,9 +204,7 @@ try {
     const triggerAnimCue = (cue) => {
       const clip = findClipName(cue.clip || '');
       if (!clip) return;
-      animator.play(clip, cue.speed ?? 1.0);
-      themeMgr.setAnimationState(clip);
-      ui.setActiveAnimation(clip);
+      playAnimation(clip, cue.speed ?? 1.0);
     };
 
     const triggerCameraCue = (cue) => {
@@ -212,36 +273,6 @@ try {
     };
   }
 
-  // Audio: intenta iniciar en cuanto carga; si el navegador bloquea autoplay,
-  // se reintenta en el primer gesto del usuario.
-  let audioBootstrapped = false;
-  const startAudio = () => {
-    if (audioBootstrapped) return;
-    audioBootstrapped = true;
-    audio.init(camera);
-    audio.loadBGM('music.mp3', 0.5);
-    audio.playBGM();
-    ui.setBGMActive(true);
-  };
-  startAudio();
-
-  const resumeAudioOnGesture = () => {
-    audio.playBGM();
-    const ctx = audio.listener?.context;
-    if (ctx?.state === 'suspended') ctx.resume();
-    ui.setBGMActive(true);
-    window.removeEventListener('pointerdown', resumeAudioOnGesture);
-    window.removeEventListener('keydown', resumeAudioOnGesture);
-    window.removeEventListener('touchstart', resumeAudioOnGesture);
-  };
-  window.addEventListener('pointerdown', resumeAudioOnGesture, { passive: true });
-  window.addEventListener('keydown', resumeAudioOnGesture);
-  window.addEventListener('touchstart', resumeAudioOnGesture, { passive: true });
-
-  ui.bindBGMToggle((isActive) => {
-    if (isActive) audio.playBGM();
-    else audio.pauseBGM();
-  });
   ui.hideLoading();
 
 } catch (err) {
