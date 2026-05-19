@@ -35,7 +35,7 @@ try {
   animator = new Animator(model, clips);
 
   // Inicializar sistema de temas
-  themeMgr.init(scene, model, floor, grid, lights, rdSim);
+  themeMgr.init(scene, model, floor, grid, lights, rdSim, camera);
 
   // Aplicar tema inicial
   themeMgr.apply('neon');

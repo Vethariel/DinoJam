@@ -1,4 +1,9 @@
 import * as THREE from 'three';
+import { Reflector } from 'three/addons/objects/Reflector.js';
+import { MAP_DEPTH_FOG, MAP_DEPTH_FOG_GLSL } from './mapDepthFog.js';
+
+const MAP_SKY_STORM_COLOR = new THREE.Color(0xa97743);
+const MAP_FLOOR_STORM_COLOR = new THREE.Color(0xdbc5ad);
 
 /* ─────────────────────────────────────────────────────────────
    Sistema de temas v2
@@ -18,6 +23,7 @@ const dinoVert = /* glsl */`
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vWorldPos;
+  varying float vViewDepth;
 
   void main(){
     #include <uv_vertex>
@@ -28,6 +34,16 @@ const dinoVert = /* glsl */`
     vUv       = uv;
     vNormal   = normalize(normalMatrix * normal);
     vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+    vec4 viewPos = viewMatrix * modelMatrix * vec4(transformed, 1.0);
+    vViewDepth = -viewPos.z;
+  }
+`;
+
+const rdLineMaskGLSL = /* glsl */`
+  float rdLineMask(float v){
+    // Mantiene trazos finos pero evita desaparecer cuando el rango de V baja.
+    float x = clamp(v * 5.0, 0.0, 1.0);
+    return x * x * x;
   }
 `;
 
@@ -45,6 +61,8 @@ const fragNeon = /* glsl */`
   varying vec2 vUv;
   varying vec3 vNormal;
 
+  ${rdLineMaskGLSL}
+
   vec3 hsl2rgb(float h, float s, float l){
     vec3 rgb = clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0, 0.0, 1.0);
     return l + s*(rgb-0.5)*(1.0-abs(2.0*l-1.0));
@@ -52,8 +70,8 @@ const fragNeon = /* glsl */`
 
   void main(){
     vec2  rd      = texture2D(uRD, vUv).rg;
-    // V alto = líneas del patrón RD
-    float lines   = clamp(rd.g * 5.0, 0.0, 1.0);
+    // V alto = líneas del patrón RD (más finas y consistentes entre temas)
+    float lines   = rdLineMask(rd.g);
 
     // Color neon ciclante en las líneas
     float hue     = fract(uTime * 0.07);
@@ -90,6 +108,10 @@ const fragMap = /* glsl */`
   uniform float     uHasBase;
   varying vec2 vUv;
   varying vec3 vNormal;
+  varying float vViewDepth;
+
+  ${rdLineMaskGLSL}
+  ${MAP_DEPTH_FOG_GLSL}
 
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   float noise(vec2 p){
@@ -101,25 +123,40 @@ const fragMap = /* glsl */`
 
   void main(){
     vec2  rd      = texture2D(uRD, vUv).rg;
-    float lines   = clamp(rd.g * 5.0, 0.0, 1.0);
+    float lines   = rdLineMask(rd.g);
 
     vec3  origTex = uHasBase > 0.5 ? texture2D(uBase, vUv).rgb : vec3(0.6,0.5,0.35);
 
-    // Convierte textura original a sepia
     float lum     = dot(origTex, vec3(0.299,0.587,0.114));
-    vec3  sepia   = vec3(lum*0.9+0.1, lum*0.7+0.05, lum*0.4);
+    vec3  paperLo = vec3(0.58, 0.44, 0.28);
+    vec3  paperHi = vec3(0.92, 0.83, 0.64);
+    vec3  paper   = mix(paperLo, paperHi, clamp(lum * 1.08 + 0.10, 0.0, 1.0));
+    float grain   = noise(vUv * 55.0 + vec2(0.0, uTime * 0.02)) * 0.05;
+    float stain   = noise(vUv * 8.0 + vec2(3.2, -2.4)) * 0.18;
+    paper *= 0.92 + grain - stain * 0.16;
 
-    // Tinta oscura para las líneas RD
-    vec3  ink     = vec3(0.12, 0.07, 0.02);
+    vec3  ink     = vec3(0.24, 0.14, 0.06);
+    float pulse   = 0.90 + 0.08 * sin(uTime * 0.8);
+    float fade    = 0.80 + noise(vUv * 6.0 + vec2(uTime * 0.05, -uTime * 0.03)) * 0.20;
+    float mask    = clamp(lines * pulse * fade, 0.0, 1.0);
+    float etch    = smoothstep(0.67, 0.95, noise(vUv * 130.0 + vec2(uTime * 0.13, 1.7))) * (1.0 - mask) * 0.10;
+    vec3  color   = mix(paper, ink, mask * 0.80 + etch);
 
-    // Ruido de envejecimiento
-    float aged    = noise(vUv*18.0)*0.15 + noise(vUv*45.0)*0.07;
+    float diff    = max(dot(vNormal, normalize(vec3(0.15, 1.0, 0.15))), 0.0);
+    color *= 0.64 + diff * 0.44;
 
-    vec3  color   = mix(sepia, ink, lines);
-    color         = mix(color, color*0.7, aged*(1.0-lines)*0.5);
+    // Guardrail de contraste para que no vuelva a "desaparecer" contra niebla/fondo.
+    vec3 mapBg = vec3(0.9098, 0.8510, 0.7333);
+    if (length(color - mapBg) < 0.20) {
+      color = mix(color, vec3(0.18, 0.10, 0.04), 0.65);
+    }
 
-    float diff    = max(dot(vNormal,normalize(vec3(1,2,1))),0.0)*0.4+0.6;
-    gl_FragColor  = vec4(color*diff, 1.0);
+    float df = depthFogFactor();
+    float fogPulse = 0.90 + 0.10 * sin(uTime * 0.8 + 0.7);
+    vec3 fogTint = mix(paperLo, paperHi, 0.72);
+    fogTint = mix(fogTint, vec3(0.77, 0.63, 0.42), 0.30 * fogPulse);
+    color = mix(color, fogTint, df);
+    gl_FragColor  = vec4(color, 1.0);
   }
 `;
 
@@ -137,21 +174,44 @@ const fragBW = /* glsl */`
   varying vec2 vUv;
   varying vec3 vNormal;
 
+  ${rdLineMaskGLSL}
+
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+  float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    vec2 u=f*f*(3.-2.*f);
+    return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+  }
+
   void main(){
     vec2  rd      = texture2D(uRD, vUv).rg;
-    float lines   = clamp(rd.g * 5.0, 0.0, 1.0);
+    float linesSoft = rdLineMask(rd.g);
+    float lines = smoothstep(0.20, 0.85, linesSoft);
 
     vec3  origTex = uHasBase > 0.5 ? texture2D(uBase, vUv).rgb : vec3(0.85);
     float lum     = dot(origTex, vec3(0.299,0.587,0.114));
-    // Alto contraste: refuerza blancos y negros
-    lum = clamp((lum - 0.5)*1.4 + 0.5, 0.0, 1.0);
-    vec3  greyBase= vec3(lum * 0.88 + 0.05);
+    lum = clamp((lum - 0.5)*1.8 + 0.5, 0.0, 1.0);
+    float grain = (noise(vUv * 160.0 + vec2(uTime * 0.45, uTime * 0.16)) - 0.5) * 0.015;
+    float mono = clamp(lum + grain, 0.0, 1.0);
+    float poster = smoothstep(0.18, 0.82, mono);
+    vec3 baseDark = vec3(0.01 + poster * 0.08);
+    vec3 baseLight = vec3(0.98 - (1.0 - poster) * 0.16);
 
-    // Líneas duras negras
-    vec3  color   = mix(greyBase, vec3(0.02), lines);
+    // Transición suave por fases (sin salto duro) cada segundo.
+    float sec = floor(uTime);
+    float local = fract(uTime);
+    float fromState = mod(sec, 2.0);
+    float toState = mod(sec + 1.0, 2.0);
+    float switch01 = mix(fromState, toState, smoothstep(0.32, 0.68, local));
+    vec3 darkInkMode  = mix(baseDark, vec3(1.0), lines * 0.96);
+    vec3 lightInkMode = mix(baseLight, vec3(0.0), lines * 0.96);
+    vec3 color = mix(darkInkMode, lightInkMode, switch01);
 
-    float diff    = max(dot(vNormal,normalize(vec3(1,2,1))),0.0)*0.4+0.6;
-    gl_FragColor  = vec4(color*diff, 1.0);
+    float vignette = smoothstep(0.98, 0.12, length(vUv - 0.5));
+    color *= mix(0.86, 1.0, vignette);
+
+    gl_FragColor  = vec4(color, 1.0);
   }
 `;
 
@@ -163,10 +223,13 @@ const fragBW = /* glsl */`
 const floorVert = /* glsl */`
   varying vec2 vUv;
   varying vec3 vWorldPos;
+  varying float vViewDepth;
   void main(){
     vUv = uv;
     vec4 wp = modelMatrix * vec4(position,1.0);
     vWorldPos = wp.xyz;
+    vec4 viewPos = viewMatrix * wp;
+    vViewDepth = -viewPos.z;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
   }
 `;
@@ -205,12 +268,16 @@ const floorNeonFrag = /* glsl */`
   }
 `;
 
-// ── Suelo MAPA ANTIGUO: pradera procedural FBM ─────────────
+// ── Suelo MAPA ANTIGUO: pergamino/cartografía procedural ───
 const floorMapFrag = /* glsl */`
   precision highp float;
   uniform float uTime;
+  uniform vec3  uFloorFogColor;
   varying vec2  vUv;
   varying vec3  vWorldPos;
+  varying float vViewDepth;
+
+  ${MAP_DEPTH_FOG_GLSL}
 
   float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
   float noise(vec2 p){
@@ -227,28 +294,39 @@ const floorMapFrag = /* glsl */`
   }
 
   void main(){
-    float dist = length(vWorldPos.xz);
-    float fade = 1.0 - smoothstep(10.0, 50.0, dist);
+    vec2 uv = vUv;
+    vec2 p = (uv - 0.5) * vec2(2.8, 1.55);
+    vec2 nUv = uv * 3.4 + vec2(2.1, -0.7);
 
-    vec2 wp   = vWorldPos.xz * 0.25;
-    float f   = fbm(wp);
-    float f2  = fbm(wp * 3.0 + vec2(5.2,1.3));
+    float fiber = fbm(nUv * 1.1);
+    float grain = noise(nUv * 8.5) * 0.08 + noise(nUv * 18.0) * 0.04;
+    float stain = fbm(nUv * 0.85 + vec2(6.3, 3.7));
 
-    // Colores: tierra seca, hierba vieja, tierra húmeda
-    vec3  dry   = vec3(0.38, 0.28, 0.14);
-    vec3  grass = vec3(0.28, 0.34, 0.12);
-    vec3  dark  = vec3(0.18, 0.13, 0.06);
+    vec3 paperHi = vec3(0.97, 0.92, 0.80);
+    vec3 paperLo = vec3(0.84, 0.71, 0.53);
+    vec3 col = mix(paperLo, paperHi, clamp(fiber * 1.12 + 0.06, 0.0, 1.0));
+    col *= 0.96 + grain - stain * 0.12;
 
-    vec3  col   = mix(dry, grass, smoothstep(0.3, 0.6, f));
-    col         = mix(col, dark,  smoothstep(0.55, 0.75, f2));
+    // Continentes más pequeños y con contraste moderado.
+    float massA = smoothstep(0.50, 0.64, fbm(p * vec2(3.6, 4.6) + vec2(1.1, 0.4)));
+    float massB = smoothstep(0.52, 0.66, fbm(p * vec2(4.4, 3.4) + vec2(-2.3, 1.5)));
+    float massC = smoothstep(0.51, 0.65, fbm(p * vec2(4.0, 4.1) + vec2(2.6, -0.9)));
+    float land = clamp(massA * 0.45 + massB * 0.50 + massC * 0.42, 0.0, 1.0);
+    land *= smoothstep(1.70, 0.40, length(p));
+    vec3 landCol = vec3(0.75, 0.62, 0.43);
+    col = mix(col, landCol, land * 0.72);
 
-    // Pequeñas variaciones de micro-textura
-    float micro = noise(vWorldPos.xz * 4.0) * 0.08;
-    col        += micro;
+    float edge = smoothstep(0.40, 0.95, length(vUv - 0.5) * 1.55);
+    // EXTREMO: mezcla al color de cielo mucho antes para borrar cualquier banda.
+    float farDepthFade = smoothstep(uDepthFogNear * 0.45, uDepthFogFar * 0.82, vViewDepth);
+    col = mix(col, vec3(0.71, 0.58, 0.42), edge * 0.015 * (1.0 - farDepthFade));
 
-    // Fade hacia el color del fondo en los bordes
-    vec3  fogCol = vec3(0.10, 0.08, 0.04);
-    col = mix(fogCol, col, fade);
+    // Ruta única de mezcla piso->cielo para evitar bandas por blends superpuestos.
+    float df = depthFogFactor();
+    float floorToSky = smoothstep(0.28, 0.92, df);
+    col = mix(col, uFloorFogColor, floorToSky);
+    // Lock final en tramo lejano.
+    col = mix(col, uFloorFogColor, farDepthFade);
 
     gl_FragColor = vec4(col, 1.0);
   }
@@ -257,11 +335,105 @@ const floorMapFrag = /* glsl */`
 // ── Suelo B&W: negro puro con fade suave ───────────────────
 const floorBWFrag = /* glsl */`
   precision highp float;
+  uniform float uCycle;
   varying vec2 vUv;
-  varying vec3 vWorldPos;
 
   void main(){
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    vec3 col = mix(vec3(0.0), vec3(1.0), uCycle);
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+// ── Fog volumétrico shader para tormenta de arena (tema map) ──
+const stormFogVert = /* glsl */`
+  varying vec3 vWorldPos;
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const stormFogFrag = /* glsl */`
+  precision highp float;
+  uniform float uTime;
+  uniform float uIntensity;
+  uniform vec3  uColor;
+  uniform vec3  uCamPos;
+  varying vec3 vWorldPos;
+
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+  float dither(vec2 p){
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+  }
+  float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    vec2 u=f*f*(3.-2.*f);
+    return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+  }
+
+  void main() {
+    vec2 p = vWorldPos.xz * 0.06;
+    float n1 = noise(p + vec2(uTime * 0.45, -uTime * 0.18));
+    float n2 = noise(p * 2.4 + vec2(-uTime * 0.7, uTime * 0.35));
+    float cloud = n1 * 0.65 + n2 * 0.35;
+
+    float h = clamp((vWorldPos.y - 0.2) / 72.0, 0.0, 1.0);
+    float heightMask = 1.0 - smoothstep(0.82, 1.0, h);
+
+    float dist = distance(vWorldPos.xz, uCamPos.xz);
+    float distMask = smoothstep(18.0, 120.0, dist);
+
+    float density = (0.10 + cloud * 0.55) * heightMask * distMask;
+    float alpha = density * (0.45 + uIntensity * 0.95);
+    float screenJitter = (dither(gl_FragCoord.xy + vec2(uTime * 13.7, -uTime * 9.1)) - 0.5) * 0.11;
+    alpha += screenJitter;
+
+    gl_FragColor = vec4(uColor, clamp(alpha, 0.0, 0.52));
+  }
+`;
+
+// Capa cercana de vetas de arena rápida (streaks) para tormenta intensa.
+const stormStreakFrag = /* glsl */`
+  precision highp float;
+  uniform float uTime;
+  uniform float uIntensity;
+  uniform vec3  uColor;
+  varying vec3 vWorldPos;
+
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+  float dither(vec2 p){
+    return fract(sin(dot(p, vec2(91.345, 37.891))) * 24634.6345);
+  }
+  float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    vec2 u=f*f*(3.-2.*f);
+    return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+  }
+
+  void main() {
+    vec2 base = vWorldPos.xz * vec2(0.19, 0.33);
+    vec2 warp = vec2(
+      noise(base * 0.93 + vec2(uTime * 2.9, -uTime * 0.8)),
+      noise(base * 1.17 + vec2(-uTime * 2.1, uTime * 1.0))
+    ) - 0.5;
+    vec2 p = base + warp * 1.15;
+
+    // Wisps irregulares en lugar de líneas periódicas visibles.
+    float plumeA = smoothstep(0.60, 0.91, noise(p * vec2(1.5, 2.4) + vec2(uTime * 3.9, -uTime * 1.6)));
+    float plumeB = smoothstep(0.64, 0.94, noise(p * vec2(2.2, 1.6) + vec2(-uTime * 5.4, uTime * 0.9)));
+    float plumeC = smoothstep(0.66, 0.95, noise((p.yx + 1.7) * vec2(1.3, 2.1) + vec2(uTime * 2.2, -uTime * 3.1)));
+    float fleck  = smoothstep(0.84, 0.985, noise(p * 4.6 + vec2(uTime * 6.6, 3.4)));
+
+    float h = clamp((vWorldPos.y - 0.2) / 18.0, 0.0, 1.0);
+    float nearMask = 1.0 - smoothstep(0.55, 1.0, h);
+
+    float wisp = plumeA * 0.44 + plumeB * 0.33 + plumeC * 0.23;
+    float a = (wisp * 0.72 + fleck * 0.15) * nearMask * (0.05 + uIntensity * 0.24);
+    a += (dither(gl_FragCoord.xy + vec2(uTime * 21.0, uTime * 11.0)) - 0.5) * 0.085;
+    gl_FragColor = vec4(uColor, clamp(a, 0.0, 0.34));
   }
 `;
 
@@ -298,14 +470,14 @@ export const THEMES = {
     floorBlend:  false,
     rdParams:    { feed: 0.037, kill: 0.060, Du: 0.20, Dv: 0.10, dt: 1.0 },
     scene: {
-      background: new THREE.Color(0x100d06),
-      fog:        new THREE.Fog(0x100d06, 18, 55),
+      background: new THREE.Color(0xe8d9bb),
+      fog:        null,
     },
     lights: {
-      ambient:  { color: 0x5c3d10, intensity: 0.5 },
-      key:      { color: 0xffe4a0, intensity: 1.6 },
-      fill:     { color: 0x8b5c20, intensity: 0.4 },
-      rim:      { color: 0xffd070, intensity: 0.5 },
+      ambient:  { color: 0x9f7a43, intensity: 0.55 },
+      key:      { color: 0xffefc4, intensity: 2.2, position: [0.8, 13.5, 0.6] },
+      fill:     { color: 0xc18c52, intensity: 0.42, position: [-6.0, 3.0, -5.0] },
+      rim:      { color: 0xe4b882, intensity: 0.46, position: [4.0, 4.0, -6.5] },
     },
   },
 
@@ -318,14 +490,14 @@ export const THEMES = {
     floorBlend:  false,
     rdParams:    { feed: 0.029, kill: 0.057, Du: 0.20, Dv: 0.10, dt: 1.0 },
     scene: {
-      background: new THREE.Color(0x000000),
-      fog:        new THREE.Fog(0x000000, 25, 70),
+      background: new THREE.Color(0xffffff),
+      fog:        new THREE.Fog(0xffffff, 20, 60),
     },
     lights: {
-      ambient:  { color: 0x333333, intensity: 0.5 },
-      key:      { color: 0xffffff, intensity: 2.0 },
-      fill:     { color: 0xaaaaaa, intensity: 0.4 },
-      rim:      { color: 0xffffff, intensity: 0.7 },
+      ambient:  { color: 0x000000, intensity: 0.0 },
+      key:      { color: 0x000000, intensity: 0.0, position: [0.2, 11.0, 0.3] },
+      fill:     { color: 0x000000, intensity: 0.0, position: [-4.6, 3.2, -4.2] },
+      rim:      { color: 0x000000, intensity: 0.0, position: [3.4, 4.6, -5.8] },
     },
   },
 };
@@ -343,28 +515,54 @@ export class ThemeManager {
   #lights       = {};
   #rdSim        = null;
   #timeUniform  = { value: 0 };
+  #bwCycleUniform = { value: 0 };
   #floorTimeMat = null;   // ShaderMaterial del suelo (para uTime)
+  #neonReflector = null;  // Reflector real para piso neon (sin grid)
+  #shadowFloor = null;    // Receptor de sombra para suelos con shader custom
+  #sandStorm = null;      // Partículas de arena ambiental (tema map)
+  #sandVel = null;        // Velocidades por partícula (x,y,z)
+  #sandPhase = null;      // Fase por partícula (turbulencia)
+  #stormFog = null;       // Volumen de niebla shader para tormenta de arena
+  #stormStreaks = null;   // Capa cercana de vetas rápidas de arena
+  #camera = null;
+  #depthFogEnabledUniform = { value: MAP_DEPTH_FOG.enabled ? 1.0 : 0.0 };
+  #depthFogNearUniform = { value: MAP_DEPTH_FOG.near };
+  #depthFogFarUniform = { value: MAP_DEPTH_FOG.far };
+  #depthFogColorUniform = { value: new THREE.Color(...MAP_DEPTH_FOG.color) };
+  #floorFogColorUniform = { value: new THREE.Color(...MAP_DEPTH_FOG.color) };
 
-  init(scene, model, floorMesh, gridHelper, lights, rdSim) {
+  init(scene, model, floorMesh, gridHelper, lights, rdSim, camera) {
     this.#scene      = scene;
     this.#model      = model;
     this.#floorMesh  = floorMesh;
     this.#gridHelper = gridHelper;
     this.#lights     = lights;
     this.#rdSim      = rdSim;
+    this.#camera     = camera;
+    this.#ensureNeonReflector();
+    this.#ensureShadowFloor();
+    this.#ensureSandStorm();
+    this.#ensureStormFog();
+    this.#ensureStormStreaks();
   }
 
   apply(id) {
     const theme = THEMES[id];
     if (!theme) return;
     this.#currentTheme = theme;
+    const mapActive = theme.id === 'map';
 
     // 1. Escena + fog
     this.#scene.background = theme.scene.background;
     this.#scene.fog        = theme.scene.fog;
+    if (mapActive && MAP_DEPTH_FOG.enabled) {
+      // En modo depth-fog, el cielo usa el mismo tono para evitar "línea de horizonte".
+      this.#scene.background = new THREE.Color(...MAP_DEPTH_FOG.color);
+      this.#scene.fog = null;
+    }
 
-    // 2. Suelo – reemplazar ShaderMaterial completo
-    this.#applyFloorShader(theme);
+    // 2. Suelo
+    this.#applyFloorByTheme(theme);
 
     // 3. Grid helper visible solo en neon
     if (this.#gridHelper) {
@@ -380,22 +578,314 @@ export class ThemeManager {
     if (this.#lights.key) {
       this.#lights.key.color.setHex(L.key.color);
       this.#lights.key.intensity = L.key.intensity;
+      if (Array.isArray(L.key.position)) {
+        this.#lights.key.position.set(...L.key.position);
+      }
+      this.#lights.key.castShadow = this.#currentTheme.id !== 'neon';
+      this.#lights.key.shadow.bias = -0.00018;
     }
     if (this.#lights.fill) {
       this.#lights.fill.color.setHex(L.fill.color);
       this.#lights.fill.intensity = L.fill.intensity;
+      if (Array.isArray(L.fill.position)) {
+        this.#lights.fill.position.set(...L.fill.position);
+      }
     }
     if (this.#lights.rim) {
       this.#lights.rim.color.setHex(L.rim.color);
       this.#lights.rim.intensity = L.rim.intensity;
+      if (Array.isArray(L.rim.position)) {
+        this.#lights.rim.position.set(...L.rim.position);
+      }
     }
 
     // 5. RD
-    this.#rdSim.setParams(theme.rdParams);
-    this.#rdSim.reset();
+    // Mantener un único estado de simulación entre temas para evitar reinicios
+    // y conservar un patrón visual consistente al cambiar de look.
 
     // 6. Materiales dino
     this.#applyDinoShader(theme);
+  }
+
+  #ensureNeonReflector() {
+    if (this.#neonReflector || !this.#scene || !this.#floorMesh) return;
+
+    const reflector = new Reflector(this.#floorMesh.geometry.clone(), {
+      clipBias: 0.0025,
+      textureWidth: 1024,
+      textureHeight: 1024,
+      color: 0x0a0a12,
+    });
+
+    reflector.rotation.copy(this.#floorMesh.rotation);
+    reflector.position.copy(this.#floorMesh.position);
+    reflector.visible = false;
+
+    // Acabado oscuro y espejado estilo "black mirror".
+    reflector.material.transparent = true;
+    reflector.material.opacity = 0.82;
+    reflector.material.depthWrite = false;
+
+    this.#scene.add(reflector);
+    this.#neonReflector = reflector;
+  }
+
+  #applyFloorByTheme(theme) {
+    const neonActive = theme.id === 'neon';
+    const mapActive = theme.id === 'map';
+    const depthOnlyMapFog = mapActive && MAP_DEPTH_FOG.enabled;
+
+    if (this.#neonReflector) {
+      this.#neonReflector.visible = neonActive;
+    }
+
+    if (this.#floorMesh) {
+      this.#floorMesh.visible = !neonActive;
+    }
+    if (this.#shadowFloor) {
+      this.#shadowFloor.visible = mapActive;
+      if (mapActive) {
+        this.#shadowFloor.material.color.setHex(0x2a1a0c);
+        this.#shadowFloor.material.opacity = 0.42;
+      }
+    }
+    if (this.#sandStorm) {
+      this.#sandStorm.visible = mapActive;
+    }
+    if (this.#stormFog) {
+      // Si depth-fog está activo, no usar volumen extra (evita bandas/horizonte).
+      this.#stormFog.visible = mapActive && !depthOnlyMapFog;
+    }
+    if (this.#stormStreaks) {
+      // Sin niebla cercana: solo niebla lejana volumétrica.
+      this.#stormStreaks.visible = false;
+    }
+
+    // Solo los temas no-neon usan shader procedural de piso.
+    if (!neonActive) {
+      this.#applyFloorShader(theme);
+    }
+  }
+
+  #ensureShadowFloor() {
+    if (this.#shadowFloor || !this.#scene || !this.#floorMesh) return;
+
+    const shadowMat = new THREE.ShadowMaterial({
+      color: 0x2a1a0c,
+      opacity: 0.42,
+    });
+    shadowMat.depthWrite = false;
+
+    // Receptor local (no plano infinito) para evitar bandas de horizonte por shadow map.
+    const shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(120, 120, 1, 1), shadowMat);
+    shadowPlane.rotation.copy(this.#floorMesh.rotation);
+    shadowPlane.position.copy(this.#floorMesh.position);
+    shadowPlane.position.y += 0.003;
+    shadowPlane.receiveShadow = true;
+    shadowPlane.visible = false;
+
+    this.#scene.add(shadowPlane);
+    this.#shadowFloor = shadowPlane;
+  }
+
+  #ensureSandStorm() {
+    if (this.#sandStorm || !this.#scene) return;
+
+    const count = 5000;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const i3 = i * 3;
+      positions[i3] = (Math.random() - 0.5) * 140;      // x
+      positions[i3 + 1] = 0.8 + Math.random() * 16.5;   // y
+      positions[i3 + 2] = (Math.random() - 0.5) * 110;  // z
+    }
+
+    this.#sandVel = new Float32Array(count * 3);
+    this.#sandPhase = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const i3 = i * 3;
+      this.#sandVel[i3] = 6.5 + Math.random() * 7.0;          // viento principal x
+      this.#sandVel[i3 + 1] = -0.2 + Math.random() * 0.4;     // deriva vertical leve
+      this.#sandVel[i3 + 2] = -4.2 + Math.random() * 2.4;     // viento lateral z
+      this.#sandPhase[i] = Math.random() * Math.PI * 2;
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const mat = new THREE.PointsMaterial({
+      color: 0x8f6230,
+      size: 0.11,
+      transparent: true,
+      opacity: 0.20,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+
+    const points = new THREE.Points(geom, mat);
+    points.visible = false;
+    points.frustumCulled = false;
+    points.renderOrder = 10;
+    this.#scene.add(points);
+    this.#sandStorm = points;
+  }
+
+  #ensureStormFog() {
+    if (this.#stormFog || !this.#scene) return;
+
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: stormFogVert,
+      fragmentShader: stormFogFrag,
+      uniforms: {
+        uTime: { value: 0 },
+        uIntensity: { value: 0.5 },
+        uColor: { value: new THREE.Color(0xd2b481) },
+        uCamPos: { value: new THREE.Vector3() },
+      },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+    });
+
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(220, 180, 200), mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    this.#scene.add(mesh);
+    this.#stormFog = mesh;
+  }
+
+  #ensureStormStreaks() {
+    if (this.#stormStreaks || !this.#scene) return;
+
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: stormFogVert,
+      fragmentShader: stormStreakFrag,
+      uniforms: {
+        uTime: { value: 0 },
+        uIntensity: { value: 0.5 },
+        uColor: { value: new THREE.Color(0xd8bc86) },
+      },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(90, 24, 70), mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    this.#scene.add(mesh);
+    this.#stormStreaks = mesh;
+  }
+
+  #updateSandStorm(dt) {
+    if (!this.#sandStorm || !this.#sandVel || !this.#sandPhase) return;
+    const attr = this.#sandStorm.geometry.getAttribute('position');
+    const p = attr.array;
+    const t = this.#timeUniform.value;
+    const vel = this.#sandVel;
+    const phase = this.#sandPhase;
+    const windBoost = 1.0 + 0.55 * Math.max(Math.sin(t * 1.0 + 0.8), 0.0);
+
+    for (let i = 0; i < p.length; i += 3) {
+      const idx = i / 3;
+      const i3 = i;
+
+      // Viento no uniforme por partícula.
+      p[i3] += dt * vel[i3] * windBoost;
+      p[i3 + 2] += dt * vel[i3 + 2] * windBoost;
+      p[i3 + 1] += dt * vel[i3 + 1];
+
+      // Turbulencia tridimensional con fase propia (evita líneas paralelas).
+      const ph = phase[idx];
+      p[i3 + 1] += Math.sin(t * 3.0 + ph + p[i3] * 0.02) * dt * 0.85;
+      p[i3] += Math.cos(t * 1.7 + ph + p[i3 + 2] * 0.015) * dt * 0.40;
+      p[i3 + 2] += Math.sin(t * 2.2 + ph * 1.3 + p[i3] * 0.01) * dt * 0.30;
+
+      // Respawn aleatorio cuando sale del volumen (no wrap directo -> menos banding).
+      if (p[i3] > 78 || p[i3 + 2] < -64 || p[i3 + 1] < 0.4 || p[i3 + 1] > 19.5) {
+        p[i3] = -78 - Math.random() * 8.0;
+        p[i3 + 1] = 0.7 + Math.random() * 16.8;
+        p[i3 + 2] = (Math.random() - 0.5) * 122.0;
+
+        vel[i3] = 6.5 + Math.random() * 7.5;
+        vel[i3 + 1] = -0.25 + Math.random() * 0.5;
+        vel[i3 + 2] = -4.5 + Math.random() * 2.8;
+        phase[idx] = Math.random() * Math.PI * 2;
+      }
+    }
+
+    attr.needsUpdate = true;
+  }
+
+  #updateMapStormFog() {
+    if (!this.#currentTheme || this.#currentTheme.id !== 'map') return;
+
+    const t = this.#timeUniform.value;
+    const gust = THREE.MathUtils.clamp(
+      0.60 + 0.34 * Math.sin(t * 0.46) + 0.28 * Math.sin(t * 1.40 + 0.9),
+      0,
+      1
+    );
+
+    // Whiteout breve y periódico para ráfagas extremas.
+    const burst = Math.pow(Math.max(Math.sin(t * 0.85 + 1.2), 0.0), 14.0);
+    const intensity = THREE.MathUtils.clamp(gust + burst * 0.9, 0, 1);
+    const skyPulse = 0.5 + 0.5 * Math.sin(t * 0.95 + 0.6);
+
+    // El cielo "se inclina" hacia tonos de tormenta de arena.
+    const skyMix = THREE.MathUtils.clamp(intensity * 0.88 + skyPulse * 0.42, 0, 1);
+    if (this.#scene.background?.isColor) {
+      this.#scene.background
+        .setRGB(MAP_DEPTH_FOG.color[0], MAP_DEPTH_FOG.color[1], MAP_DEPTH_FOG.color[2])
+        .lerp(MAP_SKY_STORM_COLOR, skyMix);
+    }
+    // Hace que el shader de profundidad use el mismo color dinámico del cielo.
+    this.#depthFogColorUniform.value
+      .setRGB(MAP_DEPTH_FOG.color[0], MAP_DEPTH_FOG.color[1], MAP_DEPTH_FOG.color[2])
+      .lerp(MAP_SKY_STORM_COLOR, skyMix);
+    this.#floorFogColorUniform.value
+      .setRGB(MAP_DEPTH_FOG.color[0], MAP_DEPTH_FOG.color[1], MAP_DEPTH_FOG.color[2])
+      .lerp(MAP_FLOOR_STORM_COLOR, skyMix);
+
+    // Depth-fog-only: sin niebla global de motor, el shader maneja el fade.
+    if (MAP_DEPTH_FOG.enabled) {
+      this.#scene.fog = null;
+    } else {
+      if (!(this.#scene.fog instanceof THREE.FogExp2)) {
+        this.#scene.fog = new THREE.FogExp2(0xd8c39b, 0.005);
+      }
+      this.#scene.fog.color.setHex(0xd8c39b);
+      this.#scene.fog.density = THREE.MathUtils.lerp(0.003, 0.008, intensity);
+    }
+
+    // Sincroniza densidad percibida del polvo suspendido.
+    if (this.#sandStorm?.material) {
+      this.#sandStorm.material.opacity = THREE.MathUtils.lerp(0.16, 0.32, intensity);
+      this.#sandStorm.material.size = THREE.MathUtils.lerp(0.08, 0.14, intensity);
+    }
+
+    // Reduce el impacto de iluminación a medida que la tormenta se vuelve fuerte.
+    const mapLights = this.#currentTheme?.lights ?? THEMES.map.lights;
+    const ambientMul = THREE.MathUtils.lerp(1.0, 0.55, intensity);
+    const keyMul = THREE.MathUtils.lerp(1.0, 0.34, intensity);
+    const fillMul = THREE.MathUtils.lerp(1.0, 0.28, intensity);
+    const rimMul = THREE.MathUtils.lerp(1.0, 0.32, intensity);
+    if (this.#lights.ambient) this.#lights.ambient.intensity = mapLights.ambient.intensity * ambientMul;
+    if (this.#lights.key) this.#lights.key.intensity = mapLights.key.intensity * keyMul;
+    if (this.#lights.fill) this.#lights.fill.intensity = mapLights.fill.intensity * fillMul;
+    if (this.#lights.rim) this.#lights.rim.intensity = mapLights.rim.intensity * rimMul;
+
+    if (this.#stormFog?.material?.uniforms) {
+      const u = this.#stormFog.material.uniforms;
+      u.uTime.value = t;
+      u.uIntensity.value = intensity;
+      if (this.#camera) u.uCamPos.value.copy(this.#camera.position);
+    }
   }
 
   #applyFloorShader(theme) {
@@ -412,6 +902,12 @@ export class ThemeManager {
       fragmentShader: theme.floorFrag,
       uniforms: {
         uTime: this.#timeUniform,
+        uCycle: this.#bwCycleUniform,
+        uDepthFogEnabled: this.#depthFogEnabledUniform,
+        uDepthFogNear: this.#depthFogNearUniform,
+        uDepthFogFar: this.#depthFogFarUniform,
+        uDepthFogColor: this.#depthFogColorUniform,
+        uFloorFogColor: this.#floorFogColorUniform,
       },
       transparent: theme.floorBlend,
       depthWrite:  !theme.floorBlend,
@@ -442,6 +938,10 @@ export class ThemeManager {
             uBase:   { value: baseMap },
             uTime:   this.#timeUniform,
             uHasBase:{ value: baseMap ? 1.0 : 0.0 },
+            uDepthFogEnabled: this.#depthFogEnabledUniform,
+            uDepthFogNear: this.#depthFogNearUniform,
+            uDepthFogFar: this.#depthFogFarUniform,
+            uDepthFogColor: this.#depthFogColorUniform,
           },
           defines: { USE_SKINNING: '' },
         });
@@ -458,12 +958,60 @@ export class ThemeManager {
     if (!this.#currentTheme) return;
     this.#timeUniform.value += dt;
 
-    this.#rdSim.step(8);
+    this.#rdSim.update(dt, 8);
 
     const newTex = this.#rdSim.rdTexture;
     this.#dinoMats.forEach(m => {
       if (m.uniforms?.uRD) m.uniforms.uRD.value = newTex;
     });
+
+    if (this.#currentTheme.id === 'neon') {
+      this.#updateNeonLights();
+    } else if (this.#currentTheme.id === 'bw') {
+      this.#updateBWCycleEnvironment();
+    } else if (this.#currentTheme.id === 'map') {
+      this.#updateSandStorm(dt);
+      this.#updateMapStormFog();
+    }
+  }
+
+  #updateNeonLights() {
+    const t = this.#timeUniform.value;
+    const hue = (t * 0.09) % 1;
+    const pulse = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(t * 4.0));
+
+    if (this.#lights.ambient) {
+      this.#lights.ambient.color.setHSL((hue + 0.08) % 1, 0.7, 0.10);
+      this.#lights.ambient.intensity = 0.22 + pulse * 0.16;
+    }
+    if (this.#lights.key) {
+      this.#lights.key.color.setHSL(hue, 1.0, 0.56);
+      this.#lights.key.intensity = 1.65 + pulse * 0.9;
+    }
+    if (this.#lights.fill) {
+      this.#lights.fill.color.setHSL((hue + 0.18) % 1, 1.0, 0.52);
+      this.#lights.fill.intensity = 0.5 + pulse * 0.45;
+    }
+    if (this.#lights.rim) {
+      this.#lights.rim.color.setHSL((hue + 0.58) % 1, 1.0, 0.58);
+      this.#lights.rim.intensity = 0.72 + pulse * 0.55;
+    }
+  }
+
+  #updateBWCycleEnvironment() {
+    const t = this.#timeUniform.value;
+    const sec = Math.floor(t);
+    const local = t - sec;
+    const fromState = sec % 2 === 0 ? 0 : 1;
+    const toState = (sec + 1) % 2 === 0 ? 0 : 1;
+    const phase = THREE.MathUtils.smoothstep(local, 0.32, 0.68);
+    const cycle = THREE.MathUtils.lerp(fromState, toState, phase);
+    this.#bwCycleUniform.value = cycle;
+
+    // El entorno cruza suavemente entre blanco y negro.
+    const bg = 1.0 - cycle;
+    if (this.#scene?.background) this.#scene.background.setRGB(bg, bg, bg);
+    if (this.#scene?.fog) this.#scene.fog.color.setRGB(bg, bg, bg);
   }
 
   get currentThemeId() { return this.#currentTheme?.id ?? null; }

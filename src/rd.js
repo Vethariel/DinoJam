@@ -10,6 +10,9 @@ import * as THREE from 'three';
    ───────────────────────────────────────────────────────────── */
 
 const SIM_RES = 512;
+const RD_GROW_SECONDS = 10;
+const RD_DECAY_SECONDS = 5;
+const RD_CLEAR_SECONDS = 5;
 
 // ── Vertex trivial ──────────────────────────────────────────
 const vertSrc = /* glsl */`
@@ -30,6 +33,8 @@ const fragSrc = /* glsl */`
   uniform float     uDu;
   uniform float     uDv;
   uniform float     uDt;
+  uniform float     uDecay;
+  uniform float     uClearMix;
   varying vec2 vUv;
 
   vec2 sampleRD(vec2 offset){
@@ -56,6 +61,15 @@ const fragSrc = /* glsl */`
     float nu = clamp(u + uDt * dudt, 0.0, 1.0);
     float nv = clamp(v + uDt * dvdt, 0.0, 1.0);
 
+    // Fase de degeneración: empuja lentamente el sistema hacia vacío.
+    // uDecay es pequeño, pero acumulado por pasos/frame vacía el campo.
+    nv = max(0.0, nv - uDecay);
+    nu = min(1.0, nu + uDecay * 0.5);
+
+    // Fuerza explícitamente el estado vacío al final del clear.
+    nv = mix(nv, 0.0, uClearMix);
+    nu = mix(nu, 1.0, uClearMix);
+
     gl_FragColor = vec4(nu, nv, 0.0, 1.0);
   }
 `;
@@ -78,11 +92,25 @@ export class RDSimulation {
   Dv   = 0.105;
   dt   = 1.0;
 
+  #phase = 'grow';
+  #phaseTime = 0;
+  #growDuration = RD_GROW_SECONDS; // segundos aprox. para "llenar/estabilizar"
+  #decayDuration = RD_DECAY_SECONDS; // segundos aprox. para vaciar
+  #clearDuration = RD_CLEAR_SECONDS; // transición final de puntos aislados -> vacío
+  #pendingRegenerate = false;
+  #presetIndex = 0;
+  #presets = [
+    { feed: 0.053, kill: 0.061, Du: 0.205, Dv: 0.102, dt: 1.0, seedCount: 78, radiusMin: 3, radiusMax: 7 },
+    { feed: 0.044, kill: 0.060, Du: 0.198, Dv: 0.099, dt: 1.0, seedCount: 70, radiusMin: 4, radiusMax: 8 },
+    { feed: 0.036, kill: 0.058, Du: 0.192, Dv: 0.096, dt: 1.0, seedCount: 82, radiusMin: 3, radiusMax: 7 },
+    { feed: 0.048, kill: 0.062, Du: 0.210, Dv: 0.104, dt: 1.0, seedCount: 68, radiusMin: 4, radiusMax: 8 },
+  ];
+
   constructor(renderer) {
     this.#renderer = renderer;
     this.#buildFBOs();
     this.#buildMesh();
-    this.reset();
+    this.#startGenerationCycle();
   }
 
   #buildFBOs() {
@@ -110,14 +138,55 @@ export class RDSimulation {
         uDu:    { value: this.Du   },
         uDv:    { value: this.Dv   },
         uDt:    { value: this.dt   },
+        uDecay: { value: 0.0 },
+        uClearMix: { value: 0.0 },
       },
     });
     this.#mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.#mat);
     this.#scene.add(this.#mesh);
   }
 
+  #startGenerationCycle() {
+    const base = this.#presets[this.#presetIndex % this.#presets.length];
+    this.#presetIndex += 1;
+
+    // Variación ligera para obtener un patrón nuevo cada ciclo.
+    const jitter = (value, amount) => value * (1 + (Math.random() * 2 - 1) * amount);
+
+    const params = {
+      feed: THREE.MathUtils.clamp(jitter(base.feed, 0.03), 0.030, 0.062),
+      kill: THREE.MathUtils.clamp(jitter(base.kill, 0.03), 0.054, 0.068),
+      Du: THREE.MathUtils.clamp(jitter(base.Du, 0.02), 0.180, 0.225),
+      Dv: THREE.MathUtils.clamp(jitter(base.Dv, 0.02), 0.090, 0.115),
+      dt: THREE.MathUtils.clamp(jitter(base.dt, 0.02), 0.90, 1.10),
+    };
+
+    this.setParams(params);
+    this.reset({
+      seedCount: base.seedCount,
+      radiusMin: base.radiusMin,
+      radiusMax: base.radiusMax,
+    });
+
+    this.#mat.uniforms.uDecay.value = 0.0;
+    this.#mat.uniforms.uClearMix.value = 0.0;
+    this.#phase = 'grow';
+    this.#phaseTime = 0;
+    this.#pendingRegenerate = false;
+  }
+
+  #startDecayCycle() {
+    this.#phase = 'decay';
+    this.#phaseTime = 0;
+  }
+
+  #startClearCycle() {
+    this.#phase = 'clear';
+    this.#phaseTime = 0;
+  }
+
   /** Reinicia con U=1 en todo el campo y semillas de V aleatorias */
-  reset() {
+  reset({ seedCount = 80, radiusMin = 4, radiusMax = 9 } = {}) {
     const n    = SIM_RES * SIM_RES;
     const data = new Float32Array(n * 4);
     for (let i = 0; i < n; i++) {
@@ -128,11 +197,13 @@ export class RDSimulation {
     }
 
     // Sembrar manchas aleatorias de V
-    const seeds = 80;
+    const seeds = Math.max(0, Math.floor(seedCount));
+    const minR = Math.max(1, Math.floor(radiusMin));
+    const maxR = Math.max(minR, Math.floor(radiusMax));
     for (let s = 0; s < seeds; s++) {
       const cx = Math.floor(Math.random() * SIM_RES);
       const cy = Math.floor(Math.random() * SIM_RES);
-      const r  = 4 + Math.floor(Math.random() * 6);
+      const r = minR + Math.floor(Math.random() * (maxR - minR + 1));
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
           if (dx*dx + dy*dy > r*r) continue;
@@ -187,6 +258,47 @@ export class RDSimulation {
       this.#current = 1 - this.#current;
     }
     this.#renderer.setRenderTarget(null);
+  }
+
+  /**
+   * Avanza simulación + máquina de estados:
+   * grow (genera/estabiliza) -> decay (vacía) -> nuevo grow con params variados.
+   */
+  update(dt, steps = 8) {
+    // Regenerar en tick separado evita saltar de puntos -> nuevo patrón en el mismo frame.
+    if (this.#pendingRegenerate) {
+      this.#startGenerationCycle();
+    }
+
+    this.#phaseTime += dt;
+
+    if (this.#phase === 'grow') {
+      this.#mat.uniforms.uDecay.value = 0.0;
+      this.#mat.uniforms.uClearMix.value = 0.0;
+    } else if (this.#phase === 'decay') {
+      const t = Math.min(this.#phaseTime / this.#decayDuration, 1.0);
+      this.#mat.uniforms.uDecay.value = THREE.MathUtils.lerp(0.0002, 0.0020, t);
+      this.#mat.uniforms.uClearMix.value = 0.0;
+    } else {
+      // Fase final: empuja remanentes puntuales hacia vacío antes del nuevo ciclo.
+      const t = Math.min(this.#phaseTime / this.#clearDuration, 1.0);
+      this.#mat.uniforms.uDecay.value = THREE.MathUtils.lerp(0.0020, 0.0060, t);
+      this.#mat.uniforms.uClearMix.value = THREE.MathUtils.smoothstep(t, 0.35, 1.0);
+    }
+
+    this.step(steps);
+
+    if (this.#phase === 'grow' && this.#phaseTime >= this.#growDuration) {
+      this.#startDecayCycle();
+      return;
+    }
+    if (this.#phase === 'decay' && this.#phaseTime >= this.#decayDuration) {
+      this.#startClearCycle();
+      return;
+    }
+    if (this.#phase === 'clear' && this.#phaseTime >= this.#clearDuration) {
+      this.#pendingRegenerate = true;
+    }
   }
 
   /** Textura de resultado actual (canal R=U, G=V) */
