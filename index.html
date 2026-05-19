@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>T-Rex Viewer</title>
+  <link rel="stylesheet" href="style.css">
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <!-- Loading overlay -->
+  <div id="loading">
+    <p class="loader-text">Cargando T-Rex</p>
+    <div class="loader-bar"><div class="loader-fill"></div></div>
+  </div>
+
+  <!-- Three.js canvas va aquí -->
+  <div id="canvas-container"></div>
+
+  <!-- Debug / animation panel -->
+  <div id="debug">
+    <h3>Animaciones</h3>
+    <div id="btn-container"></div>
+  </div>
+
+  <!-- Audio controls -->
+  <div id="audio-controls">
+    <button id="bgm-toggle" class="anim-btn">
+      <span class="dot"></span>BGM
+    </button>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status">estado: <span id="status-text">iniciando...</span></div>
+
+  <!-- Orbit hint -->
+  <div id="hint">
+    click + drag → orbitar<br>
+    scroll → zoom<br>
+    click derecho → pan
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

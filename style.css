@@ -1,0 +1,182 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ── CANVAS ───────────────────────────────────────── */
+#canvas-container {
+  position: fixed;
+  inset: 0;
+}
+
+canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── DEBUG PANEL ──────────────────────────────────── */
+#debug {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-width: 200px;
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+
+#debug h3 {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #555;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* ── AUDIO CONTROLS ───────────────────────────────── */
+#audio-controls {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-width: 140px;
+  backdrop-filter: blur(8px);
+  z-index: 10;
+}
+
+/* ── SHARED BUTTON STYLE ──────────────────────────── */
+.anim-btn {
+  display: block;
+  width: 100%;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  color: #888;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+}
+
+.anim-btn:last-child {
+  margin-bottom: 0;
+}
+
+.anim-btn:hover {
+  background: #1a1a1a;
+  border-color: #444;
+  color: #ccc;
+}
+
+.anim-btn.active {
+  background: #0f1f0f;
+  border-color: #2a5a2a;
+  color: #4fa;
+}
+
+.anim-btn .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #333;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.anim-btn.active .dot {
+  background: #4fa;
+  box-shadow: 0 0 6px #4fa;
+}
+
+/* ── STATUS BAR ───────────────────────────────────── */
+#status {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  font-size: 11px;
+  color: #444;
+  letter-spacing: 0.5px;
+  z-index: 10;
+}
+
+#status span {
+  color: #4fa;
+}
+
+/* ── ORBIT HINT ───────────────────────────────────── */
+#hint {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  font-size: 10px;
+  color: #333;
+  letter-spacing: 1px;
+  text-align: right;
+  line-height: 1.8;
+  z-index: 10;
+}
+
+/* ── LOADING ──────────────────────────────────────── */
+#loading {
+  position: fixed;
+  inset: 0;
+  background: #0a0a0a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition: opacity 0.5s;
+}
+
+#loading.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loader-text {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: #333;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.loader-bar {
+  width: 200px;
+  height: 1px;
+  background: #1a1a1a;
+  position: relative;
+  overflow: hidden;
+}
+
+.loader-fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: #4fa;
+  animation: load 1.5s ease-in-out infinite;
+}
+
+@keyframes load {
+  0%   { left: -100%; width: 100%; }
+  100% { left:  100%; width: 100%; }
+}
