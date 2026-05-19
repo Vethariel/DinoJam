@@ -1,0 +1,447 @@
+{
+  "meta": {
+    "audioFile": "music.mp3",
+    "durationSec": 105.038,
+    "estimatedBpm": 161.5,
+    "beatSec": 0.371,
+    "barSec": 1.498,
+    "firstDownbeatSec": 0.43,
+    "gridType": "4/4",
+    "rhythmMotifs": {
+      "method": "layered rhythm analysis (fixed 161.5 BPM grid + accent motifs)",
+      "constantPulsePeriodsSec": [
+        0.372,
+        0.186,
+        0.749
+      ],
+      "din_din_dan": [
+        2.67,
+        7.918,
+        23.673,
+        29.675,
+        30.79,
+        32.67,
+        36.792,
+        37.918,
+        44.664,
+        47.671
+      ],
+      "din_din_din_din_dan": [
+        1.916,
+        7.175,
+        13.92,
+        28.92,
+        31.916,
+        37.918,
+        43.921,
+        91.916
+      ],
+      "occasionalAccentBars": [
+        1.916,
+        4.888,
+        6.374,
+        10.832,
+        12.319,
+        22.721,
+        25.693,
+        27.179,
+        28.665,
+        42.04,
+        70.275,
+        82.164,
+        83.65,
+        85.136,
+        86.622,
+        88.108,
+        89.594
+      ]
+    }
+  },
+  "markers": {
+    "bars4": [
+      0.43,
+      6.42,
+      12.411,
+      18.402,
+      24.393,
+      30.383,
+      36.374,
+      42.365,
+      48.356,
+      54.346,
+      60.337,
+      66.328,
+      72.319,
+      78.309,
+      84.3,
+      90.291,
+      96.282,
+      102.272,
+      105.038
+    ],
+    "bars8": [
+      0.43,
+      12.411,
+      24.393,
+      36.374,
+      48.356,
+      60.337,
+      72.319,
+      84.3,
+      96.282,
+      105.038
+    ],
+    "bars16": [
+      0.43,
+      24.393,
+      48.356,
+      72.319,
+      96.282,
+      105.038
+    ]
+  },
+  "sections": [
+    {
+      "id": "intro",
+      "start": 0.43,
+      "end": 12.411,
+      "intensity": "mid"
+    },
+    {
+      "id": "build_1",
+      "start": 12.411,
+      "end": 24.393,
+      "intensity": "high"
+    },
+    {
+      "id": "main_1",
+      "start": 24.393,
+      "end": 36.374,
+      "intensity": "high"
+    },
+    {
+      "id": "main_2",
+      "start": 36.374,
+      "end": 48.356,
+      "intensity": "high"
+    },
+    {
+      "id": "break",
+      "start": 48.356,
+      "end": 60.337,
+      "intensity": "mid"
+    },
+    {
+      "id": "build_2",
+      "start": 60.337,
+      "end": 72.319,
+      "intensity": "high"
+    },
+    {
+      "id": "climax_1",
+      "start": 72.319,
+      "end": 84.3,
+      "intensity": "high"
+    },
+    {
+      "id": "climax_2",
+      "start": 84.3,
+      "end": 96.282,
+      "intensity": "high"
+    },
+    {
+      "id": "outro",
+      "start": 96.282,
+      "end": 105.038,
+      "intensity": "low"
+    }
+  ],
+  "tracks": {
+    "theme": [
+      {
+        "t": 0.43,
+        "theme": "map",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 12.411,
+        "theme": "neon",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 24.393,
+        "theme": "bw",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 36.374,
+        "theme": "neon",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 48.356,
+        "theme": "map",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 60.337,
+        "theme": "neon",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 72.319,
+        "theme": "bw",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 84.3,
+        "theme": "neon",
+        "transitionSec": 2.0
+      },
+      {
+        "t": 96.282,
+        "theme": "map",
+        "transitionSec": 2.0
+      }
+    ],
+    "camera": [
+      {
+        "t": 0.43,
+        "preset": "reveal_slow_orbit",
+        "durationSec": 5.99,
+        "teleport": false
+      },
+      {
+        "t": 6.42,
+        "preset": "front_full",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 12.411,
+        "preset": "orbit_push_in",
+        "durationSec": 5.991,
+        "teleport": false
+      },
+      {
+        "t": 18.402,
+        "preset": "front_full",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 24.393,
+        "preset": "side_tracking_fast",
+        "durationSec": 5.99,
+        "teleport": false
+      },
+      {
+        "t": 30.383,
+        "preset": "bite_front_far",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 36.374,
+        "preset": "hero_arc_medium",
+        "durationSec": 5.991,
+        "teleport": false
+      },
+      {
+        "t": 42.365,
+        "preset": "aerial_orbit",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 48.356,
+        "preset": "wide_breathing_hold",
+        "durationSec": 5.99,
+        "teleport": false
+      },
+      {
+        "t": 54.346,
+        "preset": "top_down",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 60.337,
+        "preset": "low_angle_dolly_in",
+        "durationSec": 5.991,
+        "teleport": false
+      },
+      {
+        "t": 66.328,
+        "preset": "climax_orbit_fast",
+        "durationSec": 2.2,
+        "teleport": true
+      },
+      {
+        "t": 72.319,
+        "preset": "climax_orbit_fast",
+        "durationSec": 2.2,
+        "teleport": false
+      },
+      {
+        "t": 78.309,
+        "preset": "front_full",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 84.3,
+        "preset": "counter_orbit_fast",
+        "durationSec": 5.991,
+        "teleport": false
+      },
+      {
+        "t": 90.291,
+        "preset": "front_full",
+        "durationSec": 5.991,
+        "teleport": true
+      },
+      {
+        "t": 96.282,
+        "preset": "outro_pullback",
+        "durationSec": 8.756,
+        "teleport": false
+      }
+    ],
+    "animation": [
+      {
+        "t": 0.43,
+        "clip": "Walk",
+        "speed": 0.9
+      },
+      {
+        "t": 6.42,
+        "clip": "Run",
+        "speed": 0.98
+      },
+      {
+        "t": 12.411,
+        "clip": "Run",
+        "speed": 1.02
+      },
+      {
+        "t": 18.402,
+        "clip": "attack_tail",
+        "speed": 1.0
+      },
+      {
+        "t": 24.393,
+        "clip": "Run",
+        "speed": 1.1
+      },
+      {
+        "t": 30.383,
+        "clip": "bite",
+        "speed": 1.0
+      },
+      {
+        "t": 41.35,
+        "clip": "Run",
+        "speed": 1.12
+      },
+      {
+        "t": 48.356,
+        "clip": "Idle",
+        "speed": 1.0
+      },
+      {
+        "t": 54.346,
+        "clip": "Run",
+        "speed": 1.08
+      },
+      {
+        "t": 60.337,
+        "clip": "roar",
+        "speed": 1.0
+      },
+      {
+        "t": 69.337,
+        "clip": "Run",
+        "speed": 1.18
+      },
+      {
+        "t": 72.319,
+        "clip": "Run",
+        "speed": 1.2
+      },
+      {
+        "t": 78.309,
+        "clip": "attack_tail",
+        "speed": 1.0
+      },
+      {
+        "t": 84.3,
+        "clip": "Run",
+        "speed": 1.16
+      },
+      {
+        "t": 90.291,
+        "clip": "roar",
+        "speed": 1.0
+      },
+      {
+        "t": 99.291,
+        "clip": "Walk",
+        "speed": 0.84
+      },
+      {
+        "t": 102.272,
+        "clip": "Walk",
+        "speed": 0.78
+      }
+    ],
+    "fx": [
+      {
+        "t": 0.43,
+        "rdIntensity": 0.6,
+        "stormIntensity": 0.2
+      },
+      {
+        "t": 12.411,
+        "rdIntensity": 0.8,
+        "stormIntensity": 0.25
+      },
+      {
+        "t": 24.393,
+        "rdIntensity": 0.85,
+        "stormIntensity": 0.3
+      },
+      {
+        "t": 36.374,
+        "rdIntensity": 0.9,
+        "stormIntensity": 0.35
+      },
+      {
+        "t": 48.356,
+        "rdIntensity": 0.55,
+        "stormIntensity": 0.4
+      },
+      {
+        "t": 60.337,
+        "rdIntensity": 0.9,
+        "stormIntensity": 0.45
+      },
+      {
+        "t": 72.319,
+        "rdIntensity": 1.0,
+        "stormIntensity": 0.55
+      },
+      {
+        "t": 84.3,
+        "rdIntensity": 0.95,
+        "stormIntensity": 0.65
+      },
+      {
+        "t": 96.282,
+        "rdIntensity": 0.5,
+        "stormIntensity": 0.25
+      }
+    ],
+    "motif": []
+  }
+}

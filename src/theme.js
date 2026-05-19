@@ -4,6 +4,7 @@ import { MAP_DEPTH_FOG, MAP_DEPTH_FOG_GLSL } from './mapDepthFog.js';
 
 const MAP_SKY_STORM_COLOR = new THREE.Color(0xa97743);
 const MAP_FLOOR_STORM_COLOR = new THREE.Color(0xdbc5ad);
+const BW_BEAT_SECONDS = 60 / 161.5;
 
 /* ─────────────────────────────────────────────────────────────
    Sistema de temas v2
@@ -77,9 +78,8 @@ const fragNeon = /* glsl */`
     float hue     = fract(uTime * 0.07);
     vec3  neonCol = hsl2rgb(hue, 1.0, 0.55);
 
-    // Textura original del dino, muy oscurecida en el fondo
-    vec3  origTex = uHasBase > 0.5 ? texture2D(uBase, vUv).rgb : vec3(0.03);
-    vec3  darkBase= origTex * 0.18;
+    // Fondo puro negro (sin mapa/base texture residual).
+    vec3  darkBase= vec3(0.0);
 
     // Mezcla: líneas → neon, fondo → textura oscura
     vec3  color   = mix(darkBase, neonCol, lines);
@@ -171,6 +171,7 @@ const fragBW = /* glsl */`
   uniform sampler2D uBase;
   uniform float     uTime;
   uniform float     uHasBase;
+  uniform float     uCycle;
   varying vec2 vUv;
   varying vec3 vNormal;
 
@@ -189,21 +190,12 @@ const fragBW = /* glsl */`
     float linesSoft = rdLineMask(rd.g);
     float lines = smoothstep(0.20, 0.85, linesSoft);
 
-    vec3  origTex = uHasBase > 0.5 ? texture2D(uBase, vUv).rgb : vec3(0.85);
-    float lum     = dot(origTex, vec3(0.299,0.587,0.114));
-    lum = clamp((lum - 0.5)*1.8 + 0.5, 0.0, 1.0);
-    float grain = (noise(vUv * 160.0 + vec2(uTime * 0.45, uTime * 0.16)) - 0.5) * 0.015;
-    float mono = clamp(lum + grain, 0.0, 1.0);
-    float poster = smoothstep(0.18, 0.82, mono);
-    vec3 baseDark = vec3(0.01 + poster * 0.08);
-    vec3 baseLight = vec3(0.98 - (1.0 - poster) * 0.16);
+    // Monocromo puro (sin influencia de mapa/base texture).
+    float grain = (noise(vUv * 160.0 + vec2(uTime * 0.45, uTime * 0.16)) - 0.5) * 0.008;
+    vec3 baseDark = vec3(0.01 + grain);
+    vec3 baseLight = vec3(0.99 + grain);
 
-    // Transición suave por fases (sin salto duro) cada segundo.
-    float sec = floor(uTime);
-    float local = fract(uTime);
-    float fromState = mod(sec, 2.0);
-    float toState = mod(sec + 1.0, 2.0);
-    float switch01 = mix(fromState, toState, smoothstep(0.32, 0.68, local));
+    float switch01 = clamp(uCycle, 0.0, 1.0);
     vec3 darkInkMode  = mix(baseDark, vec3(1.0), lines * 0.96);
     vec3 lightInkMode = mix(baseLight, vec3(0.0), lines * 0.96);
     vec3 color = mix(darkInkMode, lightInkMode, switch01);
@@ -437,6 +429,79 @@ const stormStreakFrag = /* glsl */`
   }
 `;
 
+// Arbustos secos (tema map): shader liviano con fog por profundidad y sway.
+const shrubVert = /* glsl */`
+  uniform float uTime;
+  uniform float uMotion;
+  varying vec3 vNormalW;
+  varying float vViewDepth;
+  varying vec3 vWorldPos;
+  varying vec2 vRdUv;
+
+  void main() {
+    vec3 p = position;
+    float sway = sin(uTime * 2.2 + p.y * 9.0 + p.x * 6.0) * 0.08 * uMotion;
+    p.x += sway * smoothstep(0.08, 0.52, p.y);
+    p.z += sway * 0.65 * smoothstep(0.08, 0.52, p.y);
+
+    vec4 localPos = instanceMatrix * vec4(p, 1.0);
+    vec4 worldPos = modelMatrix * localPos;
+    vWorldPos = worldPos.xyz;
+    vRdUv = worldPos.xz * 0.022 + vec2(0.5);
+
+    mat3 nMat = mat3(modelMatrix) * mat3(instanceMatrix);
+    vNormalW = normalize(nMat * normal);
+
+    vec4 viewPos = viewMatrix * worldPos;
+    vViewDepth = -viewPos.z;
+    gl_Position = projectionMatrix * viewPos;
+  }
+`;
+
+const shrubFrag = /* glsl */`
+  precision highp float;
+  uniform float uTime;
+  uniform sampler2D uRD;
+  uniform vec3 uColorLo;
+  uniform vec3 uColorHi;
+  varying vec3 vNormalW;
+  varying float vViewDepth;
+  varying vec3 vWorldPos;
+  varying vec2 vRdUv;
+
+  ${rdLineMaskGLSL}
+  ${MAP_DEPTH_FOG_GLSL}
+
+  float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+  float noise(vec2 p){
+    vec2 i=floor(p); vec2 f=fract(p);
+    float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+    vec2 u=f*f*(3.-2.*f);
+    return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+  }
+
+  void main() {
+    float n = noise(vWorldPos.xz * 0.55 + vec2(uTime * 0.04, -uTime * 0.03));
+    vec3 base = mix(uColorLo, uColorHi, n);
+    vec2 rdUv = fract(vRdUv + vec2(uTime * 0.010, -uTime * 0.008));
+    float rdLines = rdLineMask(texture2D(uRD, rdUv).g);
+    base = mix(base * 0.86, base * 1.15, rdLines * 0.72);
+    float top = smoothstep(0.0, 1.0, clamp(vWorldPos.y * 1.2, 0.0, 1.0));
+    base = mix(base, base * 1.12, top * 0.35);
+
+    vec3 L = normalize(vec3(0.25, 1.0, 0.12));
+    float diff = max(dot(normalize(vNormalW), L), 0.0);
+    vec3 col = base * (0.55 + diff * 0.65);
+
+    float df = depthFogFactor();
+    // Niebla más contundente para igualar lectura con el dino/fondo.
+    float fogAmt = clamp(0.22 * uDepthFogEnabled + pow(df, 0.55) * 1.20, 0.0, 1.0);
+    col = mix(col, uDepthFogColor, fogAmt);
+    float alpha = clamp(1.0 - fogAmt * 0.68, 0.20, 1.0);
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
 // ═══════════════════════════════════════════════════════════
 //  THEMES CONFIG
 // ═══════════════════════════════════════════════════════════
@@ -524,6 +589,20 @@ export class ThemeManager {
   #sandPhase = null;      // Fase por partícula (turbulencia)
   #stormFog = null;       // Volumen de niebla shader para tormenta de arena
   #stormStreaks = null;   // Capa cercana de vetas rápidas de arena
+  #mapShrubs = null;      // Arbustos secos sencillos para lectura de profundidad en map
+  #mapShrubMesh = null;
+  #mapShrubX = null;
+  #mapShrubZ = null;
+  #mapShrubVelX = null;
+  #mapShrubVelZ = null;
+  #mapShrubYaw = null;
+  #mapShrubTiltX = null;
+  #mapShrubTiltZ = null;
+  #mapShrubScale = null;
+  #mapShrubDummy = new THREE.Object3D();
+  #mapShrubTimeUniform = { value: 0 };
+  #mapShrubMotionUniform = { value: 0 };
+  #activeAnimName = '';
   #camera = null;
   #depthFogEnabledUniform = { value: MAP_DEPTH_FOG.enabled ? 1.0 : 0.0 };
   #depthFogNearUniform = { value: MAP_DEPTH_FOG.near };
@@ -544,6 +623,7 @@ export class ThemeManager {
     this.#ensureSandStorm();
     this.#ensureStormFog();
     this.#ensureStormStreaks();
+    this.#ensureMapShrubs();
   }
 
   apply(id) {
@@ -614,7 +694,8 @@ export class ThemeManager {
       clipBias: 0.0025,
       textureWidth: 1024,
       textureHeight: 1024,
-      color: 0x0a0a12,
+      // En Reflector, color = 0.5 gris mantiene el reflejo neutro (sin tinte).
+      color: 0x808080,
     });
 
     reflector.rotation.copy(this.#floorMesh.rotation);
@@ -623,8 +704,10 @@ export class ThemeManager {
 
     // Acabado oscuro y espejado estilo "black mirror".
     reflector.material.transparent = true;
-    reflector.material.opacity = 0.82;
+    reflector.material.opacity = 0.74;
     reflector.material.depthWrite = false;
+    // El render target del reflector ya viene transformado; evita doble tone mapping.
+    reflector.material.toneMapped = false;
 
     this.#scene.add(reflector);
     this.#neonReflector = reflector;
@@ -660,6 +743,9 @@ export class ThemeManager {
       // Sin niebla cercana: solo niebla lejana volumétrica.
       this.#stormStreaks.visible = false;
     }
+    if (this.#mapShrubs) {
+      this.#mapShrubs.visible = mapActive;
+    }
 
     // Solo los temas no-neon usan shader procedural de piso.
     if (!neonActive) {
@@ -686,6 +772,82 @@ export class ThemeManager {
 
     this.#scene.add(shadowPlane);
     this.#shadowFloor = shadowPlane;
+  }
+
+  #ensureMapShrubs() {
+    if (this.#mapShrubs || !this.#scene) return;
+
+    const group = new THREE.Group();
+    group.visible = false;
+
+    const twigGeo = new THREE.ConeGeometry(0.06, 0.52, 5);
+    const twigMat = new THREE.ShaderMaterial({
+      vertexShader: shrubVert,
+      fragmentShader: shrubFrag,
+      uniforms: {
+        uTime: this.#mapShrubTimeUniform,
+        uMotion: this.#mapShrubMotionUniform,
+        uRD: { value: this.#rdSim?.rdTexture ?? null },
+        uColorLo: { value: new THREE.Color(0x5f4125) },
+        uColorHi: { value: new THREE.Color(0x8b6237) },
+        uDepthFogEnabled: this.#depthFogEnabledUniform,
+        uDepthFogNear: this.#depthFogNearUniform,
+        uDepthFogFar: this.#depthFogFarUniform,
+        uDepthFogColor: this.#depthFogColorUniform,
+      },
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const instances = 280;
+    const twigs = new THREE.InstancedMesh(twigGeo, twigMat, instances);
+    twigs.castShadow = false;
+    twigs.receiveShadow = false;
+
+    this.#mapShrubX = new Float32Array(instances);
+    this.#mapShrubZ = new Float32Array(instances);
+    this.#mapShrubVelX = new Float32Array(instances);
+    this.#mapShrubVelZ = new Float32Array(instances);
+    this.#mapShrubYaw = new Float32Array(instances);
+    this.#mapShrubTiltX = new Float32Array(instances);
+    this.#mapShrubTiltZ = new Float32Array(instances);
+    this.#mapShrubScale = new Float32Array(instances);
+
+    const dummy = this.#mapShrubDummy;
+    for (let i = 0; i < instances; i++) {
+      // Distribución radial amplia (evita saturar el centro del dino).
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 4.5 + Math.pow(Math.random(), 0.72) * 72.0;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const y = 0.03;
+      const tiltX = -0.18 + Math.random() * 0.30;
+      const tiltZ = -0.18 + Math.random() * 0.30;
+      const yaw = Math.random() * Math.PI * 2;
+      const s = 0.65 + Math.random() * 1.05;
+
+      this.#mapShrubX[i] = x;
+      this.#mapShrubZ[i] = z;
+      this.#mapShrubVelX[i] = 2.6 + Math.random() * 2.2;
+      this.#mapShrubVelZ[i] = -1.6 + Math.random() * 0.9;
+      this.#mapShrubYaw[i] = yaw;
+      this.#mapShrubTiltX[i] = tiltX;
+      this.#mapShrubTiltZ[i] = tiltZ;
+      this.#mapShrubScale[i] = s;
+
+      dummy.position.set(x, y, z);
+      dummy.rotation.set(tiltX, yaw, tiltZ);
+      dummy.scale.set(0.7 + Math.random() * 0.8, s, 0.7 + Math.random() * 0.8);
+      dummy.updateMatrix();
+      twigs.setMatrixAt(i, dummy.matrix);
+    }
+    twigs.instanceMatrix.needsUpdate = true;
+    group.add(twigs);
+
+    this.#scene.add(group);
+    this.#mapShrubs = group;
+    this.#mapShrubMesh = twigs;
   }
 
   #ensureSandStorm() {
@@ -786,7 +948,7 @@ export class ThemeManager {
     if (!this.#sandStorm || !this.#sandVel || !this.#sandPhase) return;
     const attr = this.#sandStorm.geometry.getAttribute('position');
     const p = attr.array;
-    const t = this.#timeUniform.value;
+    const t = this.#timeUniform.value * 2.0;
     const vel = this.#sandVel;
     const phase = this.#sandPhase;
     const windBoost = 1.0 + 0.55 * Math.max(Math.sin(t * 1.0 + 0.8), 0.0);
@@ -826,15 +988,26 @@ export class ThemeManager {
     if (!this.#currentTheme || this.#currentTheme.id !== 'map') return;
 
     const t = this.#timeUniform.value;
-    const gust = THREE.MathUtils.clamp(
-      0.60 + 0.34 * Math.sin(t * 0.46) + 0.28 * Math.sin(t * 1.40 + 0.9),
-      0,
-      1
-    );
-
-    // Whiteout breve y periódico para ráfagas extremas.
-    const burst = Math.pow(Math.max(Math.sin(t * 0.85 + 1.2), 0.0), 14.0);
-    const intensity = THREE.MathUtils.clamp(gust + burst * 0.9, 0, 1);
+    // Patrón por beats (doblado): 4 beats build + 2 beats pico + 2 beats caída.
+    const beatTime = t / BW_BEAT_SECONDS;
+    const phase = ((beatTime % 8) + 8) % 8;
+    let intensity = 0.0;
+    if (phase < 4.0) {
+      // Build (4 beats)
+      const a = THREE.MathUtils.smoothstep(phase / 4.0, 0, 1);
+      intensity = THREE.MathUtils.lerp(0.30, 0.74, a);
+    } else if (phase < 6.0) {
+      // Peak (2 beats)
+      const p = (phase - 4.0) / 2.0;
+      intensity = THREE.MathUtils.lerp(0.82, 0.96, Math.sin(p * Math.PI));
+    } else {
+      // Decay/Clear (2 beats)
+      const d = (phase - 6.0) / 2.0;
+      const a = THREE.MathUtils.smoothstep(d, 0, 1);
+      intensity = THREE.MathUtils.lerp(0.72, 0.24, a);
+    }
+    // Micro-oscilación musical (sutil) sin romper el patrón principal.
+    intensity = THREE.MathUtils.clamp(intensity + 0.04 * Math.sin(beatTime * Math.PI), 0, 1);
     const skyPulse = 0.5 + 0.5 * Math.sin(t * 0.95 + 0.6);
 
     // El cielo "se inclina" hacia tonos de tormenta de arena.
@@ -937,6 +1110,7 @@ export class ThemeManager {
             uRD:     { value: this.#rdSim.rdTexture },
             uBase:   { value: baseMap },
             uTime:   this.#timeUniform,
+            uCycle:  this.#bwCycleUniform,
             uHasBase:{ value: baseMap ? 1.0 : 0.0 },
             uDepthFogEnabled: this.#depthFogEnabledUniform,
             uDepthFogNear: this.#depthFogNearUniform,
@@ -964,14 +1138,54 @@ export class ThemeManager {
     this.#dinoMats.forEach(m => {
       if (m.uniforms?.uRD) m.uniforms.uRD.value = newTex;
     });
+    if (this.#mapShrubMesh?.material?.uniforms?.uRD) {
+      this.#mapShrubMesh.material.uniforms.uRD.value = newTex;
+    }
 
     if (this.#currentTheme.id === 'neon') {
       this.#updateNeonLights();
     } else if (this.#currentTheme.id === 'bw') {
-      this.#updateBWCycleEnvironment();
+      this.#updateBWCycleEnvironment(dt);
     } else if (this.#currentTheme.id === 'map') {
       this.#updateSandStorm(dt);
       this.#updateMapStormFog();
+    }
+
+    if (this.#mapShrubs) {
+      const runActive = this.#activeAnimName.includes('run');
+      const targetMotion = this.#currentTheme.id === 'map' && runActive ? 1.0 : 0.18;
+      this.#mapShrubMotionUniform.value = THREE.MathUtils.damp(
+        this.#mapShrubMotionUniform.value,
+        targetMotion,
+        6.0,
+        dt
+      );
+      this.#mapShrubTimeUniform.value += dt * (runActive ? 2.4 : 0.8);
+
+      if (this.#currentTheme.id === 'map' && runActive && this.#mapShrubMesh) {
+        const dummy = this.#mapShrubDummy;
+        // Movimiento contrario al avance del dino: cabeza -> cola (eje -Z).
+        const flowSpeed = 12.0;
+        const count = this.#mapShrubX.length;
+        for (let i = 0; i < count; i++) {
+          this.#mapShrubZ[i] -= dt * flowSpeed;
+          this.#mapShrubX[i] += Math.sin(this.#mapShrubTimeUniform.value * 0.9 + i * 0.37) * dt * 0.45;
+
+          // Wrap/teleport al extremo opuesto para mantener densidad en escena.
+          if (this.#mapShrubZ[i] < -115) {
+            this.#mapShrubZ[i] = 115 + Math.random() * 22.0;
+            this.#mapShrubX[i] = (Math.random() - 0.5) * 170.0;
+          }
+
+          dummy.position.set(this.#mapShrubX[i], 0.03, this.#mapShrubZ[i]);
+          dummy.rotation.set(this.#mapShrubTiltX[i], this.#mapShrubYaw[i], this.#mapShrubTiltZ[i]);
+          const s = this.#mapShrubScale[i];
+          dummy.scale.set(0.7 + (s - 0.65) * 0.8, s, 0.7 + (s - 0.65) * 0.8);
+          dummy.updateMatrix();
+          this.#mapShrubMesh.setMatrixAt(i, dummy.matrix);
+        }
+        this.#mapShrubMesh.instanceMatrix.needsUpdate = true;
+      }
     }
   }
 
@@ -996,22 +1210,37 @@ export class ThemeManager {
       this.#lights.rim.color.setHSL((hue + 0.58) % 1, 1.0, 0.58);
       this.#lights.rim.intensity = 0.72 + pulse * 0.55;
     }
+
+    const reflectorUniformColor = this.#neonReflector?.material?.uniforms?.color?.value;
+    if (reflectorUniformColor?.isColor) {
+      // 0.5 es neutro para el blendOverlay del Reflector (sin sesgo cromatico).
+      reflectorUniformColor.setRGB(0.5, 0.5, 0.5);
+    }
   }
 
-  #updateBWCycleEnvironment() {
-    const t = this.#timeUniform.value;
-    const sec = Math.floor(t);
-    const local = t - sec;
-    const fromState = sec % 2 === 0 ? 0 : 1;
-    const toState = (sec + 1) % 2 === 0 ? 0 : 1;
-    const phase = THREE.MathUtils.smoothstep(local, 0.32, 0.68);
-    const cycle = THREE.MathUtils.lerp(fromState, toState, phase);
+  #updateBWCycleEnvironment(_dt) {
+    // Patrón solicitado:
+    // 0.0-2.0 beats -> negro (B)
+    // 2.0-4.0 beats -> transición B->W
+    // 4.0-6.0 beats -> blanco (W)
+    const beatTime = this.#timeUniform.value / BW_BEAT_SECONDS;
+    const phase = ((beatTime % 6) + 6) % 6;
+    let cycle = 1.0;
+    if (phase < 2.0) {
+      cycle = 0.0;
+    } else if (phase < 4.0) {
+      cycle = THREE.MathUtils.smoothstep((phase - 2.0) / 2.0, 0, 1);
+    }
     this.#bwCycleUniform.value = cycle;
 
     // El entorno cruza suavemente entre blanco y negro.
     const bg = 1.0 - cycle;
     if (this.#scene?.background) this.#scene.background.setRGB(bg, bg, bg);
     if (this.#scene?.fog) this.#scene.fog.color.setRGB(bg, bg, bg);
+  }
+
+  setAnimationState(name = '') {
+    this.#activeAnimName = String(name).toLowerCase();
   }
 
   get currentThemeId() { return this.#currentTheme?.id ?? null; }

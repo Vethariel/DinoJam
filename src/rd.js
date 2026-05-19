@@ -10,9 +10,11 @@ import * as THREE from 'three';
    ───────────────────────────────────────────────────────────── */
 
 const SIM_RES = 512;
-const RD_GROW_SECONDS = 10;
-const RD_DECAY_SECONDS = 5;
-const RD_CLEAR_SECONDS = 5;
+const RD_MUSIC_BPM = 161.5;
+const RD_BEAT_SECONDS = 60 / RD_MUSIC_BPM;
+const RD_GROW_SECONDS = RD_BEAT_SECONDS * 2;  // 2 beats
+const RD_DECAY_SECONDS = RD_BEAT_SECONDS * 1; // 1 beat
+const RD_CLEAR_SECONDS = RD_BEAT_SECONDS * 1; // 1 beat
 
 // ── Vertex trivial ──────────────────────────────────────────
 const vertSrc = /* glsl */`
@@ -98,6 +100,8 @@ export class RDSimulation {
   #decayDuration = RD_DECAY_SECONDS; // segundos aprox. para vaciar
   #clearDuration = RD_CLEAR_SECONDS; // transición final de puntos aislados -> vacío
   #pendingRegenerate = false;
+  #motifDecayBoost = 0;
+  #motifClearBoost = 0;
   #presetIndex = 0;
   #presets = [
     { feed: 0.053, kill: 0.061, Du: 0.205, Dv: 0.102, dt: 1.0, seedCount: 78, radiusMin: 3, radiusMax: 7 },
@@ -264,6 +268,13 @@ export class RDSimulation {
    * Avanza simulación + máquina de estados:
    * grow (genera/estabiliza) -> decay (vacía) -> nuevo grow con params variados.
    */
+  triggerMusicMotif(type = 'din_din_dan') {
+    const major = type === 'din_din_din_din_dan';
+    this.#motifDecayBoost = Math.max(this.#motifDecayBoost, major ? 0.0028 : 0.0014);
+    this.#motifClearBoost = Math.max(this.#motifClearBoost, major ? 0.42 : 0.16);
+    this.#phaseTime += RD_BEAT_SECONDS * (major ? 2.2 : 1.0);
+  }
+
   update(dt, steps = 8) {
     // Regenerar en tick separado evita saltar de puntos -> nuevo patrón en el mismo frame.
     if (this.#pendingRegenerate) {
@@ -286,7 +297,13 @@ export class RDSimulation {
       this.#mat.uniforms.uClearMix.value = THREE.MathUtils.smoothstep(t, 0.35, 1.0);
     }
 
-    this.step(steps);
+    this.#mat.uniforms.uDecay.value = Math.min(0.02, this.#mat.uniforms.uDecay.value + this.#motifDecayBoost);
+    this.#mat.uniforms.uClearMix.value = Math.min(1.0, this.#mat.uniforms.uClearMix.value + this.#motifClearBoost);
+    this.#motifDecayBoost = Math.max(0, this.#motifDecayBoost - dt * 0.0021);
+    this.#motifClearBoost = Math.max(0, this.#motifClearBoost - dt * 0.9);
+
+    const phaseSteps = this.#phase === 'grow' ? Math.max(1, Math.round(steps * 2.7)) : steps;
+    this.step(phaseSteps);
 
     if (this.#phase === 'grow' && this.#phaseTime >= this.#growDuration) {
       this.#startDecayCycle();

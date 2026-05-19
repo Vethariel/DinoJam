@@ -15,7 +15,7 @@
   }
   </script>
 </head>
-<body>
+<body class="customization-hidden">
 
   <!-- Loading overlay -->
   <div id="loading">
@@ -39,14 +39,12 @@
     </button>
   </div>
 
-  <!-- Status bar -->
-  <div id="status">estado: <span id="status-text">iniciando...</span></div>
-
-  <!-- Orbit hint -->
-  <div id="hint">
-    click + drag → orbitar<br>
-    scroll → zoom<br>
-    click derecho → pan
+  <div id="brand-controls">
+    <div id="brand-meta">
+      <div id="app-title">DinoJam</div>
+      <div id="status">estado: <span id="status-text">iniciando...</span></div>
+    </div>
+    <button id="customization-toggle" class="anim-btn" aria-label="Personalizacion" title="Personalizacion">&#9881;</button>
   </div>
 
   <script type="module" src="src/main.js"></script>

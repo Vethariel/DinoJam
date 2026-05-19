@@ -27,6 +27,10 @@ export class AudioManager {
 
   /** @type {boolean} */
   #initialized = false;
+  #bgmClockStart = 0;
+  #bgmElapsed = 0;
+  #bgmDuration = 0;
+  #bgmWantsPlay = false;
 
   /**
    * Crea el AudioListener y lo adjunta a la cámara.
@@ -57,6 +61,11 @@ export class AudioManager {
       this.bgm.setBuffer(buffer);
       this.bgm.setLoop(true);
       this.bgm.setVolume(volume);
+      this.#bgmDuration = buffer.duration || 0;
+      if (this.#bgmWantsPlay && !this.bgm.isPlaying) {
+        this.bgm.play();
+        this.#bgmClockStart = performance.now() / 1000;
+      }
       // No auto-play: usar playBGM() explícitamente
     });
   }
@@ -101,15 +110,37 @@ export class AudioManager {
 
   toggleBGM() {
     if (!this.bgm?.buffer) return;
-    this.bgm.isPlaying ? this.bgm.pause() : this.bgm.play();
+    this.bgm.isPlaying ? this.pauseBGM() : this.playBGM();
   }
 
   playBGM() {
-    if (this.bgm?.buffer && !this.bgm.isPlaying) this.bgm.play();
+    this.#bgmWantsPlay = true;
+    if (this.bgm?.buffer && !this.bgm.isPlaying) {
+      this.bgm.play();
+      this.#bgmClockStart = performance.now() / 1000;
+    }
   }
 
   pauseBGM() {
-    if (this.bgm?.isPlaying) this.bgm.pause();
+    this.#bgmWantsPlay = false;
+    if (this.bgm?.isPlaying) {
+      this.#bgmElapsed += performance.now() / 1000 - this.#bgmClockStart;
+      this.bgm.pause();
+    }
+  }
+
+  resetBGMClock() {
+    this.#bgmElapsed = 0;
+    this.#bgmClockStart = performance.now() / 1000;
+  }
+
+  getBGMTimeSec() {
+    let t = this.#bgmElapsed;
+    if (this.bgm?.isPlaying) {
+      t += performance.now() / 1000 - this.#bgmClockStart;
+    }
+    if (this.#bgmDuration > 0) t %= this.#bgmDuration;
+    return t;
   }
 
   /** Dispara el rugido una vez (ideal: llamar desde Animator al cambiar animación) */

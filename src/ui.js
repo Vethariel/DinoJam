@@ -7,6 +7,7 @@ export class UI {
   #loadingEl    = document.getElementById('loading');
   #btnContainer = document.getElementById('btn-container');
   #bgmBtn       = document.getElementById('bgm-toggle');
+  #customizationBtn = document.getElementById('customization-toggle');
   #themePanel   = null;
 
   setStatus(text) { this.#statusEl.textContent = text; }
@@ -35,6 +36,24 @@ export class UI {
       const isActive = this.#bgmBtn.classList.toggle('active');
       onToggle(isActive);
     });
+  }
+
+  setBGMActive(isActive) {
+    this.#bgmBtn?.classList.toggle('active', Boolean(isActive));
+  }
+
+  bindCustomizationToggle(onToggle) {
+    this.#customizationBtn?.addEventListener('click', () => {
+      const nowVisible = document.body.classList.toggle('customization-hidden') === false;
+      this.#customizationBtn.classList.toggle('active', nowVisible);
+      onToggle?.(nowVisible);
+    });
+  }
+
+  setCustomizationVisible(isVisible) {
+    const visible = Boolean(isVisible);
+    document.body.classList.toggle('customization-hidden', !visible);
+    this.#customizationBtn?.classList.toggle('active', visible);
   }
 
   /**

@@ -64,18 +64,23 @@ export class Animator {
    * Si la animación es "run", baja el modelo `runYOffset` unidades en Y
    * para compensar el flote; al salir de run se restaura la Y base.
    * @param {string} name
+   * @param {number} [speed=1]
    */
-  play(name) {
+  play(name, speed = 1) {
     const next = this.actions.get(name);
     if (!next) {
       console.warn(`[Animator] Animación no encontrada: "${name}"`);
       return;
     }
 
+    const s = Number.isFinite(speed) ? Math.max(0.05, Math.min(speed, 3.0)) : 1.0;
+
     if (this.currentAction && this.currentAction !== next) {
+      next.timeScale = s;
       next.reset().play();
       this.currentAction.crossFadeTo(next, this.crossfadeDuration, true);
     } else {
+      next.timeScale = s;
       next.reset().play();
     }
 
